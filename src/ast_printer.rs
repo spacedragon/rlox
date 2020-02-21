@@ -29,9 +29,9 @@ impl Visitor<String> for AstPrinter {
 
     fn visit_literal(&mut self, expr: &Expr) -> String {
         match expr {
-            Expr::Literal(Token{ token_type: NUMBER(ref v), pos: _ }) => { format!("{}", v) }
-            Expr::Literal(Token{ token_type:STRING(ref s), pos: _ }) => { format!("\"{}\"", s) }
-            Expr::Literal(Token{ token_type:IDENTIFIER(ref s), pos: _ }) => { s.to_string() }
+            Expr::Literal(Token{ token_type: NUMBER(ref v), .. }) => { format!("{}", v) }
+            Expr::Literal(Token{ token_type:STRING(ref s), .. }) => { format!("\"{}\"", s) }
+            Expr::Literal(Token{ token_type:IDENTIFIER(ref s), .. }) => { s.to_string() }
             Expr::Literal(ref op) => { format!("{}", op) }
             _=> panic!("not a literal expr.")
         }

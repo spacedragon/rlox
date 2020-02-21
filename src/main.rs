@@ -38,11 +38,11 @@ fn main() {
     info!("starting up");
     let matches = Opt::from_args();
     match &matches.cmd {
-        Command::Compile{ files: _ }  => {
+        Command::Compile{ .. }  => {
             println!("{:?}", matches);
 
         }
-        Command::Run{ files: _ }  => {
+        Command::Run{ .. }  => {
 
         }
     }

@@ -196,7 +196,7 @@ impl Scanner {
     }
 
     fn is_at_end(&self) -> bool {
-        return self.current >= self.source.len();
+        self.current >= self.source.len()
     }
 
     pub fn scan_tokens(mut self) -> Result<Vec<Token>, ScannerError> {
@@ -336,7 +336,7 @@ impl Scanner {
         if self.is_at_end() {
             return '\0';
         }
-        return self.source[self.current];
+        self.source[self.current]
     }
 
     fn matches(&mut self, expected: char) -> bool {
@@ -348,7 +348,7 @@ impl Scanner {
         }
 
         self.current += 1;
-        return true;
+        true
     }
 
     fn add_token(&mut self, token_type: TokenType) {

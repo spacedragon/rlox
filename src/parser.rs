@@ -91,7 +91,7 @@ impl Parser {
         if self.matches(vec![VAR]) {
             return self.var_declaration();
         }
-        return self.statement();
+        self.statement()
     }
 
     fn var_declaration(&mut self) -> Result<Stmt, ParserError> {
@@ -108,14 +108,14 @@ impl Parser {
             self.consume(&SEMICOLON, || ExpectSemi)?;
             return Ok(Stmt::VarStmt(name, initializer));
         }
-        return Err(ExpectVarName)
+        Err(ExpectVarName)
     }
 
     fn statement(&mut self) -> Result<Stmt, ParserError> {
         if self.matches(vec![PRINT]) {
             return self.print_stmt();
         }
-        return self.expr_stmt();
+        self.expr_stmt()
     }
 
     fn print_stmt(&mut self) -> Result<Stmt, ParserError> {
@@ -131,7 +131,7 @@ impl Parser {
     }
 
     fn is_at_end(&self) -> bool {
-        return self.current >= self.tokens.len() || self.peek().token_type == EOF;
+        self.current >= self.tokens.len() || self.peek().token_type == EOF
     }
 
     pub fn expression(&mut self) -> Result<Expr, ParserError> {
@@ -215,7 +215,7 @@ impl Parser {
             return Result::Ok(Expr::Unary(op, Box::new(right)));
         }
 
-        return self.primary();
+        self.primary()
     }
 
     fn primary(&mut self) -> Result<Expr, ParserError> {
@@ -226,7 +226,7 @@ impl Parser {
             NUMBER(_) | STRING(_) | TRUE | FALSE | NIL => {
                 let tt = t.clone();
                 self.advance();
-                return Ok(Expr::Literal(tt));
+                Ok(Expr::Literal(tt))
             }
             LEFT_PAREN => {
                 self.advance();

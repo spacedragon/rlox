@@ -106,7 +106,7 @@ impl<W: std::fmt::Write> Interpreter<W> {
         Ok(())
     }
     fn execute(&mut self, stmt: &Stmt) -> Result<(), RuntimeError> {
-        return stmt.accept(self)
+        stmt.accept(self)
     }
 
 }
@@ -125,7 +125,7 @@ impl<W: std::fmt::Write> StmtVisitor for Interpreter<W> {
     fn visit_print_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err> {
         if let Stmt::PrintStmt(expr) = stmt {
             let value = self.evaluate(expr)?;
-            write!(self.writer, "{}\n", value).expect("can't format value");
+            writeln!(self.writer, "{}", value).expect("can't format value");
             return Ok(())
         }
         panic!("should not reach here!")
@@ -184,11 +184,11 @@ impl<W: std::fmt::Write> Visitor<ValueResult> for Interpreter<W> {
 
     fn visit_unary(&mut self, expr: &Expr) -> ValueResult {
         match expr {
-            Expr::Unary(Token{ token_type: MINUS, pos: _ }, rhs) => {
+            Expr::Unary(Token{ token_type: MINUS, .. }, rhs) => {
                 let v = self.evaluate(rhs)?.check_number()?;
                 Ok(Value::NUMBER(-v))
             }
-            Expr::Unary(Token{ token_type: BANG, pos: _ }, rhs) => {
+            Expr::Unary(Token{ token_type: BANG, .. }, rhs) => {
                 let v = self.evaluate(rhs)?;
                 Ok(Value::BOOL(v.is_truthy()))
             }
