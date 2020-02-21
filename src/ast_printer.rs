@@ -1,5 +1,6 @@
 use crate::parser::{Visitor, Expr};
 use crate::scanner::TokenType::*;
+use crate::scanner::Token;
 
 pub struct AstPrinter;
 
@@ -28,12 +29,16 @@ impl Visitor<String> for AstPrinter {
 
     fn visit_literal(&mut self, expr: &Expr) -> String {
         match expr {
-            Expr::Literal(NUMBER(ref v)) => { format!("{}", v) }
-            Expr::Literal(STRING(ref s)) => { format!("\"{}\"", s) }
-            Expr::Literal(IDENTIFIER(ref s)) => { format!("{}", s) }
+            Expr::Literal(Token{ token_type: NUMBER(ref v), pos: _ }) => { format!("{}", v) }
+            Expr::Literal(Token{ token_type:STRING(ref s), pos: _ }) => { format!("\"{}\"", s) }
+            Expr::Literal(Token{ token_type:IDENTIFIER(ref s), pos: _ }) => { s.to_string() }
             Expr::Literal(ref op) => { format!("{}", op) }
             _=> panic!("not a literal expr.")
         }
+    }
+
+    fn visit_var(&mut self, _expr: &Expr) -> String {
+        unimplemented!()
     }
 }
 
@@ -46,10 +51,10 @@ impl AstPrinter {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::scanner::TokenType;
+    use crate::scanner::{TokenType, Pos, Token};
     #[test]
     fn test_string() {
-        let expression = Expr::Literal(STRING(String::from("test")));
+        let expression = Expr::Literal(Token::new(STRING(String::from("test")), Pos::default()));
         let mut printer = AstPrinter {};
         assert_eq!(expression.accept(&mut printer), String::from("\"test\""))
     }
@@ -58,13 +63,13 @@ mod test {
     fn test_printer() {
         let expression = Expr::Binary(
             Box::new(Expr::Unary(
-                TokenType::MINUS,
-                Box::new(Expr::Literal(TokenType::NUMBER(123f64)))
+                Token::new(TokenType::MINUS, Pos::default()),
+                Box::new(Expr::Literal(Token::new(TokenType::NUMBER(123f64), Pos::default())))
             )),
-            TokenType::STAR,
+            Token::new(TokenType::STAR, Pos::default()),
             Box::new(Expr::Grouping(
                 Box::new(Expr::Literal(
-                    TokenType::NUMBER(45.67)
+                    Token::new(TokenType::NUMBER(45.67), Pos::default())
                 ))
             ))
 

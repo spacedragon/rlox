@@ -112,6 +112,7 @@ impl TokenType {}
 use TokenType::*;
 use crate::scanner::ScannerError::{UnexpectedCharacter, UnterminatedString, InvalidNumber};
 use std::collections::HashMap;
+use failure::_core::fmt::{Formatter};
 
 lazy_static! {
     static ref KEYWORDS: HashMap<&'static str, TokenType> = {
@@ -144,10 +145,35 @@ pub struct Pos {
     pub line: usize,
 }
 
+impl Default for Pos {
+    fn default() -> Self {
+        Pos {
+            line:1,
+            start:0,
+            len:0
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Token {
     pub token_type: TokenType,
     pub pos: Pos,
+}
+
+impl Token {
+    pub fn new(token_type: TokenType, pos: Pos) -> Self {
+        Token {
+            token_type,
+            pos
+        }
+    }
+}
+
+impl std::fmt::Display for Token {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.token_type)
+    }
 }
 
 pub struct Scanner {

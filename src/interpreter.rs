@@ -67,6 +67,7 @@ pub enum RuntimeError {
 }
 
 use RuntimeError::*;
+use crate::scanner::Token;
 
 impl Value {
     fn is_truthy(&self) -> bool {
@@ -95,10 +96,10 @@ pub struct Interpreter<W: std::fmt::Write>{
 
 impl<W: std::fmt::Write> Interpreter<W> {
     fn evaluate(&mut self, expr: &Expr) -> ValueResult {
-        return expr.accept(self);
+        expr.accept(self)
     }
 
-    pub fn interpret(&mut self, statements: &Vec<Stmt>) -> Result<(), RuntimeError> {
+    pub fn interpret(&mut self, statements: &[Stmt]) -> Result<(), RuntimeError> {
         for statement in statements {
             self.execute(statement)?;
         }
@@ -130,6 +131,10 @@ impl<W: std::fmt::Write> StmtVisitor for Interpreter<W> {
         panic!("should not reach here!")
 
     }
+
+    fn visit_var_stmt(&mut self, _stmt: &Stmt) -> Result<(), Self::Err> {
+        unimplemented!()
+    }
 }
 
 impl<W: std::fmt::Write> Visitor<ValueResult> for Interpreter<W> {
@@ -137,7 +142,7 @@ impl<W: std::fmt::Write> Visitor<ValueResult> for Interpreter<W> {
         if let Expr::Binary(lhs, op, rhs) = expr {
             let left = self.evaluate(lhs)?;
             let right = self.evaluate(rhs)?;
-            let result: Value = match op {
+            let result: Value = match op.token_type {
                 MINUS => (left.check_number()? - right.check_number()?).into(),
                 SLASH => {
                     let right = right.check_number()?;
@@ -179,11 +184,11 @@ impl<W: std::fmt::Write> Visitor<ValueResult> for Interpreter<W> {
 
     fn visit_unary(&mut self, expr: &Expr) -> ValueResult {
         match expr {
-            Expr::Unary(MINUS, rhs) => {
+            Expr::Unary(Token{ token_type: MINUS, pos: _ }, rhs) => {
                 let v = self.evaluate(rhs)?.check_number()?;
                 Ok(Value::NUMBER(-v))
             }
-            Expr::Unary(BANG, rhs) => {
+            Expr::Unary(Token{ token_type: BANG, pos: _ }, rhs) => {
                 let v = self.evaluate(rhs)?;
                 Ok(Value::BOOL(v.is_truthy()))
             }
@@ -197,15 +202,24 @@ impl<W: std::fmt::Write> Visitor<ValueResult> for Interpreter<W> {
 
     fn visit_literal(&mut self, expr: &Expr) -> ValueResult {
         match expr {
-            Expr::Literal(STRING(s)) => Ok(Value::STRING(s.clone())),
-            Expr::Literal(NUMBER(f)) => Ok(Value::NUMBER(*f)),
-            Expr::Literal(NIL) => Ok(Value::NIL),
-            Expr::Literal(TRUE) => Ok(Value::BOOL(true)),
-            Expr::Literal(FALSE) => Ok(Value::BOOL(false)),
+            Expr::Literal(token) => match token.token_type {
+                STRING(ref s) => Ok(Value::STRING(s.clone())),
+                NUMBER(ref f) => Ok(Value::NUMBER(*f)),
+                NIL => Ok(Value::NIL),
+                TRUE => Ok(Value::BOOL(true)),
+                FALSE => Ok(Value::BOOL(false)),
+                _ => {
+                    Err(UnexpectedExpr { message: format!("{:?}", expr) })
+                }
+            },
             _ => {
                 Err(UnexpectedExpr { message: format!("{:?}", expr) })
             }
         }
+    }
+
+    fn visit_var(&mut self, _expr: &Expr) -> ValueResult {
+        unimplemented!()
     }
 }
 

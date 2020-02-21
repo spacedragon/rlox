@@ -7,20 +7,23 @@ pub trait Visitor<R> {
     fn visit_grouping(&mut self, expr: &Expr) -> R;
     fn visit_unary(&mut self, expr: &Expr) -> R;
     fn visit_literal(&mut self, expr: &Expr) -> R;
+    fn visit_var(&mut self, expr: &Expr) -> R;
 }
 
 pub trait StmtVisitor {
     type Err;
     fn visit_expr_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err> ;
     fn visit_print_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err>;
+    fn visit_var_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err>;
 }
 
 #[derive(Debug)]
 pub enum Expr {
-    Binary(Box<Expr>, TokenType, Box<Expr>),
-    Literal(TokenType),
+    Binary(Box<Expr>, Token, Box<Expr>),
+    Literal(Token),
     Grouping(Box<Expr>),
-    Unary(TokenType, Box<Expr>),
+    Unary(Token, Box<Expr>),
+    Variable(Token),
 }
 
 impl Expr {
@@ -30,6 +33,7 @@ impl Expr {
             Expr::Literal(_) => visitor.visit_literal(self),
             Expr::Grouping(_) => visitor.visit_grouping(self),
             Expr::Unary(_, _) => visitor.visit_unary(self),
+            Expr::Variable(_) => visitor.visit_var(self)
         }
     }
 }
@@ -38,6 +42,7 @@ impl Expr {
 pub enum Stmt {
     ExprStmt(Expr),
     PrintStmt(Expr),
+    VarStmt(Token, Expr),
 }
 
 impl Stmt {
@@ -45,6 +50,7 @@ impl Stmt {
         match self {
             Stmt::ExprStmt(_) => { visitor.visit_expr_stmt(self) }
             Stmt::PrintStmt(_) => { visitor.visit_print_stmt(self) }
+            Stmt::VarStmt(_, _) => { visitor.visit_var_stmt(self) }
         }
     }
 }
@@ -55,8 +61,10 @@ pub enum ParserError {
     ExpectExpr { line: usize },
     #[fail(display = "Expect ')' after expression. (line {})", line)]
     ExpectRightParen { line: usize },
-    #[fail(display = "Expect ';' after value.")]
+    #[fail(display = "Expect ';' after expression.")]
     ExpectSemi,
+    #[fail(display = "Expect variable name.")]
+    ExpectVarName,
 }
 
 use ParserError::*;
@@ -74,9 +82,33 @@ impl Parser {
     pub fn parse(mut self) -> Result<Vec<Stmt>, ParserError> {
         let mut result = Vec::new();
         while !self.is_at_end() {
-            result.push(self.statement()?);
+            result.push(self.declaration()?);
         }
         Ok(result)
+    }
+
+    fn declaration(&mut self) -> Result<Stmt, ParserError> {
+        if self.matches(vec![VAR]) {
+            return self.var_declaration();
+        }
+        return self.statement();
+    }
+
+    fn var_declaration(&mut self) -> Result<Stmt, ParserError> {
+        let token = self.peek();
+        if let IDENTIFIER(ref _name) = token.token_type {
+            let name = token.clone();
+            self.advance();
+            let initializer: Expr = if self.check(&EQUAL) {
+                self.advance();
+                self.expression()?
+            } else {
+                Expr::Literal(Token::new(NIL, name.pos.clone()))
+            };
+            self.consume(&SEMICOLON, || ExpectSemi)?;
+            return Ok(Stmt::VarStmt(name, initializer));
+        }
+        return Err(ExpectVarName)
     }
 
     fn statement(&mut self) -> Result<Stmt, ParserError> {
@@ -110,7 +142,7 @@ impl Parser {
         let mut expr = self.comparison()?;
         while self.matches(vec![BANG_EQUAL, EQUAL_EQUAL]) {
             let right = self.comparison()?;
-            let op = self.previous().token_type.clone();
+            let op = self.previous().clone();
             expr = Expr::Binary(Box::new(expr), op, Box::new(right));
         }
         Result::Ok(expr)
@@ -121,7 +153,7 @@ impl Parser {
         while self.matches(vec![GREATER_EQUAL, GREATER, LESS, LESS_EQUAL]) {
             let op = self.previous().clone();
             let right = self.addition()?;
-            expr = Expr::Binary(Box::new(expr), op.token_type, Box::new(right))
+            expr = Expr::Binary(Box::new(expr), op, Box::new(right))
         }
         Result::Ok(expr)
     }
@@ -159,7 +191,7 @@ impl Parser {
     fn addition(&mut self) -> Result<Expr, ParserError> {
         let mut expr = self.multiplication()?;
         while self.matches(vec![MINUS, PLUS]) {
-            let op = self.previous().clone().token_type;
+            let op = self.previous().clone();
             let right = self.multiplication()?;
             expr = Expr::Binary(Box::new(expr), op, Box::new(right))
         }
@@ -169,7 +201,7 @@ impl Parser {
     fn multiplication(&mut self) -> Result<Expr, ParserError> {
         let mut expr = self.unary()?;
         while self.matches(vec![SLASH, STAR]) {
-            let op = self.previous().token_type.clone();
+            let op = self.previous().clone();
             let right = self.unary()?;
             expr = Expr::Binary(Box::new(expr), op, Box::new(right))
         }
@@ -178,7 +210,7 @@ impl Parser {
 
     fn unary(&mut self) -> Result<Expr, ParserError> {
         if self.matches(vec![BANG, MINUS]) {
-            let op = self.previous().token_type.clone();
+            let op = self.previous().clone();
             let right = self.unary()?;
             return Result::Ok(Expr::Unary(op, Box::new(right)));
         }
@@ -192,7 +224,7 @@ impl Parser {
 
         match t.token_type {
             NUMBER(_) | STRING(_) | TRUE | FALSE | NIL => {
-                let tt = t.token_type.clone();
+                let tt = t.clone();
                 self.advance();
                 return Ok(Expr::Literal(tt));
             }
@@ -203,16 +235,19 @@ impl Parser {
                              || ParserError::ExpectRightParen { line })?;
                 Ok(Expr::Grouping(Box::new(expr)))
             }
+            IDENTIFIER(_) => {
+                Ok(Expr::Variable(t.clone()))
+            }
             _ => Err(ParserError::ExpectExpr { line }),
         }
     }
-    fn consume<F>(&mut self, token_type: &TokenType, on_err: F) -> Result<(), ParserError>
+    fn consume<F>(&mut self, token_type: &TokenType, on_err: F) -> Result<&Token, ParserError>
         where
             F: FnOnce() -> ParserError,
     {
         if self.check(token_type) {
             self.advance();
-            Ok(())
+            Ok(self.previous())
         } else {
             Err(on_err())
         }

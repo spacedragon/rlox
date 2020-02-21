@@ -3,7 +3,7 @@
 #![allow(dead_code)]
 
 use structopt::StructOpt;
-use log::{info, warn};
+use log::{info};
 use std::path::PathBuf;
 
 
@@ -38,11 +38,11 @@ fn main() {
     info!("starting up");
     let matches = Opt::from_args();
     match &matches.cmd {
-        Command::Compile{ files }  => {
+        Command::Compile{ files: _ }  => {
             println!("{:?}", matches);
 
         }
-        Command::Run{ files }  => {
+        Command::Run{ files: _ }  => {
 
         }
     }
