@@ -1,0 +1,242 @@
+use crate::scanner::TokenType::*;
+use crate::scanner::{Token, TokenType};
+use failure::Fail;
+
+pub trait Visitor<R> {
+    fn visit_binary(&mut self, expr: &Expr) -> R;
+    fn visit_grouping(&mut self, expr: &Expr) -> R;
+    fn visit_unary(&mut self, expr: &Expr) -> R;
+    fn visit_literal(&mut self, expr: &Expr) -> R;
+}
+
+pub trait StmtVisitor {
+    fn visit_expr_stmt(&mut self, stmt: &Stmt) ;
+    fn visit_print_stmt(&mut self, stmt: &Stmt);
+}
+
+#[derive(Debug)]
+pub enum Expr {
+    Binary(Box<Expr>, TokenType, Box<Expr>),
+    Literal(TokenType),
+    Grouping(Box<Expr>),
+    Unary(TokenType, Box<Expr>),
+}
+
+impl Expr {
+    pub fn accept<R>(&self, visitor: &mut dyn Visitor<R>) -> R {
+        match self {
+            Expr::Binary(_, _, _) => visitor.visit_binary(self),
+            Expr::Literal(_) => visitor.visit_literal(self),
+            Expr::Grouping(_) => visitor.visit_grouping(self),
+            Expr::Unary(_, _) => visitor.visit_unary(self),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum Stmt {
+    ExprStmt(Expr),
+    PrintStmt(Expr),
+}
+
+impl Stmt {
+    pub fn accept(&self, visitor: &mut dyn StmtVisitor) {
+        match self {
+            Stmt::ExprStmt(_) => { visitor.visit_expr_stmt(self) }
+            Stmt::PrintStmt(_) => { visitor.visit_print_stmt(self) }
+        }
+    }
+}
+
+#[derive(Debug, Fail)]
+pub enum ParserError {
+    #[fail(display = "Expect expression.(line {})", line)]
+    ExpectExpr { line: usize },
+    #[fail(display = "Expect ')' after expression. (line {})", line)]
+    ExpectRightParen { line: usize },
+    #[fail(display = "Expect ';' after value.")]
+    ExpectSemi,
+}
+
+use ParserError::*;
+
+pub struct Parser {
+    tokens: Vec<Token>,
+    current: usize,
+}
+
+impl Parser {
+    pub fn new(tokens: Vec<Token>) -> Self {
+        Parser { tokens, current: 0 }
+    }
+
+    pub fn parse(mut self) -> Result<Vec<Stmt>, ParserError> {
+        let mut result = Vec::new();
+        while self.is_at_end() {
+            result.push(self.statement()?);
+        }
+        Ok(result)
+    }
+
+    fn statement(&mut self) -> Result<Stmt, ParserError> {
+        if self.matches(vec![PRINT]) {
+            return self.print_stmt();
+        }
+        return self.expr_stmt();
+    }
+
+    fn print_stmt(&mut self) -> Result<Stmt, ParserError> {
+        let expr = self.expression()?;
+        self.consume(&SEMICOLON, || ExpectSemi)?;
+        Ok(Stmt::PrintStmt(expr))
+    }
+
+    fn expr_stmt(&mut self) -> Result<Stmt, ParserError> {
+        let expr = self.expression()?;
+        self.consume(&SEMICOLON, || ExpectSemi)?;
+        Ok(Stmt::ExprStmt(expr))
+    }
+
+    fn is_at_end(&self) -> bool {
+        return self.current >= self.tokens.len() || self.peek().token_type == EOF;
+    }
+
+    pub fn expression(&mut self) -> Result<Expr, ParserError> {
+        self.equality()
+    }
+
+    fn equality(&mut self) -> Result<Expr, ParserError> {
+        let mut expr = self.comparison()?;
+        while self.matches(vec![BANG_EQUAL, EQUAL_EQUAL]) {
+            let right = self.comparison()?;
+            let op = self.previous().token_type.clone();
+            expr = Expr::Binary(Box::new(expr), op, Box::new(right));
+        }
+        Result::Ok(expr)
+    }
+
+    fn comparison(&mut self) -> Result<Expr, ParserError> {
+        let mut expr = self.addition()?;
+        while self.matches(vec![GREATER_EQUAL, GREATER, LESS, LESS_EQUAL]) {
+            let op = self.previous().clone();
+            let right = self.addition()?;
+            expr = Expr::Binary(Box::new(expr), op.token_type, Box::new(right))
+        }
+        Result::Ok(expr)
+    }
+
+    fn advance(&mut self) -> &Token {
+        if !self.is_at_end() {
+            self.current += 1;
+        }
+        self.previous()
+    }
+
+    fn previous(&self) -> &Token {
+        &self.tokens[self.current - 1]
+    }
+
+    fn peek(&self) -> &Token {
+        &self.tokens[self.current]
+    }
+
+    fn check(&self, token_type: &TokenType) -> bool {
+        !self.is_at_end() && self.peek().token_type == *token_type
+    }
+
+    fn matches(&mut self, token_types: Vec<TokenType>) -> bool {
+        token_types.iter().any(|t| {
+            if self.check(t) {
+                self.advance();
+                true
+            } else {
+                false
+            }
+        })
+    }
+
+    fn addition(&mut self) -> Result<Expr, ParserError> {
+        let mut expr = self.multiplication()?;
+        while self.matches(vec![MINUS, PLUS]) {
+            let op = self.previous().clone().token_type;
+            let right = self.multiplication()?;
+            expr = Expr::Binary(Box::new(expr), op, Box::new(right))
+        }
+        Result::Ok(expr)
+    }
+
+    fn multiplication(&mut self) -> Result<Expr, ParserError> {
+        let mut expr = self.unary()?;
+        while self.matches(vec![SLASH, STAR]) {
+            let op = self.previous().token_type.clone();
+            let right = self.unary()?;
+            expr = Expr::Binary(Box::new(expr), op, Box::new(right))
+        }
+        Result::Ok(expr)
+    }
+
+    fn unary(&mut self) -> Result<Expr, ParserError> {
+        if self.matches(vec![BANG, MINUS]) {
+            let op = self.previous().token_type.clone();
+            let right = self.unary()?;
+            return Result::Ok(Expr::Unary(op, Box::new(right)));
+        }
+
+        return self.primary();
+    }
+
+    fn primary(&mut self) -> Result<Expr, ParserError> {
+        let t = self.peek();
+        let line = t.pos.line;
+
+        match t.token_type {
+            NUMBER(_) | STRING(_) | TRUE | FALSE | NIL => {
+                let tt = t.token_type.clone();
+                self.advance();
+                return Ok(Expr::Literal(tt));
+            }
+            LEFT_PAREN => {
+                self.advance();
+                let expr = self.expression()?;
+                self.consume(&RIGHT_PAREN,
+                             || ParserError::ExpectRightParen { line })?;
+                Ok(Expr::Grouping(Box::new(expr)))
+            }
+            _ => Err(ParserError::ExpectExpr { line }),
+        }
+    }
+    fn consume<F>(&mut self, token_type: &TokenType, on_err: F) -> Result<(), ParserError>
+        where
+            F: FnOnce() -> ParserError,
+    {
+        if self.check(token_type) {
+            self.advance();
+            Ok(())
+        } else {
+            Err(on_err())
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::ast_printer::AstPrinter;
+    use crate::parser::Parser;
+    use crate::scanner::Scanner;
+    use failure::Error;
+
+    #[test]
+    fn test_expr() -> Result<(), Error> {
+        let source = "-1 + 2 * 3/(6-5)";
+        let mut scanner = Scanner::new(source);
+        let tokens = scanner.scan_tokens()?;
+        let mut parser = Parser::new(tokens);
+        let expr = parser.expression()?;
+        let mut printer = AstPrinter {};
+        assert_eq!(
+            printer.print(&expr),
+            "(+ (- 1) (/ (* 2 3) (group (- 6 5))))"
+        );
+        Ok(())
+    }
+}
