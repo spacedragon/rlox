@@ -2,7 +2,6 @@ use crate::parser::{Visitor, Expr, StmtVisitor, Stmt};
 use crate::scanner::TokenType::*;
 use failure::Fail;
 
-pub struct Interpreter;
 use std::fmt;
 
 
@@ -88,33 +87,53 @@ impl Value {
     }
 }
 
-type RuntimeValue = Result<Value, RuntimeError>;
+type ValueResult = Result<Value, RuntimeError>;
 
-impl Interpreter {
-    fn evaluate(&mut self, expr: &Expr) -> RuntimeValue {
+pub struct Interpreter<W: std::fmt::Write>{
+    writer: W
+}
+
+impl<W: std::fmt::Write> Interpreter<W> {
+    fn evaluate(&mut self, expr: &Expr) -> ValueResult {
         return expr.accept(self);
     }
 
-    pub fn interpret(&mut self, expr: &Expr) -> Result<String, RuntimeError> {
-        let value = self.evaluate(expr)?;
-        Ok(format!("{}", value))
-    }
-}
-
-impl StmtVisitor for Interpreter {
-    fn visit_expr_stmt(&mut self, stmt: &Stmt) -> Result<(), RuntimeError> {
-        let Stmt::ExprStmt(expr) = stmt;
-        self.evaluate(expr)?;
+    pub fn interpret(&mut self, statements: &Vec<Stmt>) -> Result<(), RuntimeError> {
+        for statement in statements {
+            self.execute(statement)?;
+        }
         Ok(())
     }
+    fn execute(&mut self, stmt: &Stmt) -> Result<(), RuntimeError> {
+        return stmt.accept(self)
+    }
 
-    fn visit_print_stmt(&mut self, stmt: &Stmt) {
-        unimplemented!()
+}
+
+impl<W: std::fmt::Write> StmtVisitor for Interpreter<W> {
+    type Err = RuntimeError;
+
+    fn visit_expr_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err> {
+        if let Stmt::ExprStmt(expr) = stmt {
+            self.evaluate(expr)?;
+            return Ok(())
+        }
+        panic!("should not reach here!")
+    }
+
+    fn visit_print_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err> {
+        if let Stmt::PrintStmt(expr) = stmt {
+            let value = self.evaluate(expr)?;
+            write!(self.writer, "{}\n", value).expect("can't format value");
+            return Ok(())
+        }
+        panic!("should not reach here!")
+
     }
 }
 
-impl Visitor<RuntimeValue> for Interpreter {
-    fn visit_binary(&mut self, expr: &Expr) -> RuntimeValue {
+impl<W: std::fmt::Write> Visitor<ValueResult> for Interpreter<W> {
+    fn visit_binary(&mut self, expr: &Expr) -> ValueResult {
         if let Expr::Binary(lhs, op, rhs) = expr {
             let left = self.evaluate(lhs)?;
             let right = self.evaluate(rhs)?;
@@ -150,7 +169,7 @@ impl Visitor<RuntimeValue> for Interpreter {
         panic!("not a binary expr")
     }
 
-    fn visit_grouping(&mut self, expr: &Expr) -> RuntimeValue {
+    fn visit_grouping(&mut self, expr: &Expr) -> ValueResult {
         if let Expr::Grouping(expr) = expr {
             return self.evaluate(expr);
         }
@@ -158,7 +177,7 @@ impl Visitor<RuntimeValue> for Interpreter {
     }
 
 
-    fn visit_unary(&mut self, expr: &Expr) -> RuntimeValue {
+    fn visit_unary(&mut self, expr: &Expr) -> ValueResult {
         match expr {
             Expr::Unary(MINUS, rhs) => {
                 let v = self.evaluate(rhs)?.check_number()?;
@@ -176,7 +195,7 @@ impl Visitor<RuntimeValue> for Interpreter {
 
 
 
-    fn visit_literal(&mut self, expr: &Expr) -> RuntimeValue {
+    fn visit_literal(&mut self, expr: &Expr) -> ValueResult {
         match expr {
             Expr::Literal(STRING(s)) => Ok(Value::STRING(s.clone())),
             Expr::Literal(NUMBER(f)) => Ok(Value::NUMBER(*f)),
@@ -198,21 +217,24 @@ mod test {
     use crate::scanner::Scanner;
     use crate::parser::Parser;
 
-    fn evalute(source: &str) -> Result<String, Error> {
+    fn eval(source: &str) -> Result<String, Error> {
         let scanner = Scanner::new(source);
         let tokens = scanner.scan_tokens()?;
         let parser = Parser::new(tokens);
-        let expr = parser.parse()?;
-        let mut interpreter = Interpreter {};
-        let result = interpreter.interpret(&expr)?;
-        Ok(result)
+        let stmts = parser.parse()?;
+        let output = String::new();
+        let mut interpreter = Interpreter{
+            writer: output
+        };
+        interpreter.interpret(&stmts)?;
+        Ok(interpreter.writer)
     }
 
     #[test]
     fn test_expr() -> Result<(), Error> {
-        let source = "-1 + 2 * 3/(6-5)";
-        let result = evalute(source)?;
-        assert_eq!(result, String::from("5"));
+        let source = "print -1 + 2 * 3/(6-5);";
+        let result = eval(source)?;
+        assert_eq!(result, String::from("5\n"));
         Ok(())
     }
 
@@ -220,17 +242,25 @@ mod test {
 
     #[test]
     fn test_compare() -> Result<(), Error> {
-        let source = "1 > 2";
-        let result = evalute(source)?;
-        assert_eq!(result, String::from("false"));
+        let source = "print 1 > 2;";
+        let result = eval(source)?;
+        assert_eq!(result, String::from("false\n"));
         Ok(())
     }
 
     #[test]
     fn test_string_plus() -> Result<(), Error> {
-        let source = "1 + \"2\"";
-        let result = evalute(source)?;
-        assert_eq!(result, String::from("12"));
+        let source = "print 1 + \"2\";";
+        let result = eval(source)?;
+        assert_eq!(result, String::from("12\n"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_stmts() -> Result<(),Error> {
+        let source = "print  \"one\";\n print true; print 2+1;";
+        let result = eval(source)?;
+        assert_eq!(result, String::from("one\ntrue\n3\n"));
         Ok(())
     }
 }

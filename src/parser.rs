@@ -10,8 +10,9 @@ pub trait Visitor<R> {
 }
 
 pub trait StmtVisitor {
-    fn visit_expr_stmt(&mut self, stmt: &Stmt) ;
-    fn visit_print_stmt(&mut self, stmt: &Stmt);
+    type Err;
+    fn visit_expr_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err> ;
+    fn visit_print_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err>;
 }
 
 #[derive(Debug)]
@@ -40,7 +41,7 @@ pub enum Stmt {
 }
 
 impl Stmt {
-    pub fn accept(&self, visitor: &mut dyn StmtVisitor) {
+    pub fn accept<E>(&self, visitor: &mut dyn StmtVisitor<Err = E>) -> Result<(), E> {
         match self {
             Stmt::ExprStmt(_) => { visitor.visit_expr_stmt(self) }
             Stmt::PrintStmt(_) => { visitor.visit_print_stmt(self) }
@@ -72,7 +73,7 @@ impl Parser {
 
     pub fn parse(mut self) -> Result<Vec<Stmt>, ParserError> {
         let mut result = Vec::new();
-        while self.is_at_end() {
+        while !self.is_at_end() {
             result.push(self.statement()?);
         }
         Ok(result)
@@ -228,7 +229,7 @@ mod test {
     #[test]
     fn test_expr() -> Result<(), Error> {
         let source = "-1 + 2 * 3/(6-5)";
-        let mut scanner = Scanner::new(source);
+        let scanner = Scanner::new(source);
         let tokens = scanner.scan_tokens()?;
         let mut parser = Parser::new(tokens);
         let expr = parser.expression()?;

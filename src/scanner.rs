@@ -342,7 +342,7 @@ mod test {
     use super::*;
 
     fn matches(source: &str, expected: Vec<TokenType>) {
-        let mut scanner = Scanner::new(source);
+        let scanner = Scanner::new(source);
         let tokens = scanner.scan_tokens().unwrap();
         let result: Vec<TokenType> = tokens.iter().map(|t| t.token_type.clone()).collect();
         assert_eq!(result, expected);
