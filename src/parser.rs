@@ -8,6 +8,7 @@ pub trait Visitor<R> {
     fn visit_unary(&mut self, expr: &Expr) -> R;
     fn visit_literal(&mut self, expr: &Expr) -> R;
     fn visit_var(&mut self, expr: &Expr) -> R;
+    fn visit_assign(&mut self, expr: &Expr) -> R;
 }
 
 pub trait StmtVisitor {
@@ -15,10 +16,12 @@ pub trait StmtVisitor {
     fn visit_expr_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err> ;
     fn visit_print_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err>;
     fn visit_var_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err>;
+    fn visit_block_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err>;
 }
 
 #[derive(Debug)]
 pub enum Expr {
+    Assign(Token, Box<Expr>),
     Binary(Box<Expr>, Token, Box<Expr>),
     Literal(Token),
     Grouping(Box<Expr>),
@@ -33,7 +36,8 @@ impl Expr {
             Expr::Literal(_) => visitor.visit_literal(self),
             Expr::Grouping(_) => visitor.visit_grouping(self),
             Expr::Unary(_, _) => visitor.visit_unary(self),
-            Expr::Variable(_) => visitor.visit_var(self)
+            Expr::Variable(_) => visitor.visit_var(self),
+            Expr::Assign(_, _) => visitor.visit_assign(self)
         }
     }
 }
@@ -43,6 +47,7 @@ pub enum Stmt {
     ExprStmt(Expr),
     PrintStmt(Expr),
     VarStmt(Token, Expr),
+    Block(Vec<Stmt>),
 }
 
 impl Stmt {
@@ -51,6 +56,7 @@ impl Stmt {
             Stmt::ExprStmt(_) => { visitor.visit_expr_stmt(self) }
             Stmt::PrintStmt(_) => { visitor.visit_print_stmt(self) }
             Stmt::VarStmt(_, _) => { visitor.visit_var_stmt(self) }
+            Stmt::Block(_) => { visitor.visit_block_stmt(self)}
         }
     }
 }
@@ -61,10 +67,14 @@ pub enum ParserError {
     ExpectExpr { line: usize },
     #[fail(display = "Expect ')' after expression. (line {})", line)]
     ExpectRightParen { line: usize },
-    #[fail(display = "Expect ';' after expression.")]
-    ExpectSemi,
+    #[fail(display = "Expect ';' after expression. (line {})", line)]
+    ExpectSemi { line: usize },
     #[fail(display = "Expect variable name.")]
     ExpectVarName,
+    #[fail(display = "Invalid assignment target. (line {})", line)]
+    InvalidAssign { line: usize },
+    #[fail(display = "Expect '}}' after block. (line {})",  line)]
+    ExpectRightBrace { line: usize },
 }
 
 use ParserError::*;
@@ -98,6 +108,7 @@ impl Parser {
         let token = self.peek();
         if let IDENTIFIER(ref _name) = token.token_type {
             let name = token.clone();
+            let line = token.pos.line;
             self.advance();
             let initializer: Expr = if self.check(&EQUAL) {
                 self.advance();
@@ -105,7 +116,7 @@ impl Parser {
             } else {
                 Expr::Literal(Token::new(NIL, name.pos.clone()))
             };
-            self.consume(&SEMICOLON, || ExpectSemi)?;
+            self.consume(&SEMICOLON, || ExpectSemi { line })?;
             return Ok(Stmt::VarStmt(name, initializer));
         }
         Err(ExpectVarName)
@@ -115,18 +126,34 @@ impl Parser {
         if self.matches(vec![PRINT]) {
             return self.print_stmt();
         }
+        if self.matches(vec![LEFT_BRACE]) {
+            return self.block()
+        }
         self.expr_stmt()
+    }
+
+    fn block(&mut self) -> Result<Stmt, ParserError> {
+        let mut stmts = vec![];
+        while !self.check(&RIGHT_BRACE) && !self.is_at_end() {
+            let stmt = self.declaration()?;
+            stmts.push(stmt);
+        }
+        let line = self.previous().pos.line;
+        self.consume(&RIGHT_BRACE, || ExpectRightBrace { line })?;
+        Ok(Stmt::Block(stmts))
     }
 
     fn print_stmt(&mut self) -> Result<Stmt, ParserError> {
         let expr = self.expression()?;
-        self.consume(&SEMICOLON, || ExpectSemi)?;
+        let line = self.previous().pos.line;
+        self.consume(&SEMICOLON, || ExpectSemi { line })?;
         Ok(Stmt::PrintStmt(expr))
     }
 
     fn expr_stmt(&mut self) -> Result<Stmt, ParserError> {
         let expr = self.expression()?;
-        self.consume(&SEMICOLON, || ExpectSemi)?;
+        let line = self.previous().pos.line;
+        self.consume(&SEMICOLON, || ExpectSemi { line })?;
         Ok(Stmt::ExprStmt(expr))
     }
 
@@ -135,7 +162,25 @@ impl Parser {
     }
 
     pub fn expression(&mut self) -> Result<Expr, ParserError> {
-        self.equality()
+        self.assignment()
+    }
+
+    fn assignment(&mut self) -> Result<Expr, ParserError> {
+        let expr = self.equality()?;
+        if self.matches(vec![EQUAL]) {
+            let equals = self.previous();
+            let line = equals.pos.line;
+            let value = self.assignment()?;
+            match expr {
+                Expr::Variable(t) => {
+                    return Ok(Expr::Assign(t, Box::new(value)));
+                }
+                _ => {
+                    return Err(ParserError::InvalidAssign { line })
+                }
+            }
+        }
+        Ok(expr)
     }
 
     fn equality(&mut self) -> Result<Expr, ParserError> {
@@ -236,7 +281,9 @@ impl Parser {
                 Ok(Expr::Grouping(Box::new(expr)))
             }
             IDENTIFIER(_) => {
-                Ok(Expr::Variable(t.clone()))
+                let token = t.clone();
+                self.advance();
+                Ok(Expr::Variable(token))
             }
             _ => Err(ParserError::ExpectExpr { line }),
         }

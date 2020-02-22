@@ -37,8 +37,18 @@ impl Visitor<String> for AstPrinter {
         }
     }
 
-    fn visit_var(&mut self, _expr: &Expr) -> String {
-        unimplemented!()
+    fn visit_var(&mut self, expr: &Expr) -> String {
+        if let Expr::Variable(ref t) = expr {
+            return format!("(var {})", t)
+        }
+        panic!("not a var expr")
+    }
+
+    fn visit_assign(&mut self, expr: &Expr) -> String {
+        if let Expr::Assign(ref t, ..) = expr {
+            return format!("(assign {})", t, )
+        }
+        panic!("not a assign expr")
     }
 }
 
