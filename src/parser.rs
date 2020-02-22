@@ -19,6 +19,7 @@ pub trait StmtVisitor {
     fn visit_var_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err>;
     fn visit_block_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err>;
     fn visit_if_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err>;
+    fn visit_while_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err>;
 }
 
 #[derive(Debug)]
@@ -53,6 +54,7 @@ pub enum Stmt {
     VarStmt(Token, Expr),
     Block(Vec<Stmt>),
     IfStmt(Expr, Box<Stmt>, Option<Box<Stmt>>),
+    WhileStmt(Expr, Box<Stmt>)
 }
 
 impl Stmt {
@@ -63,6 +65,7 @@ impl Stmt {
             Stmt::VarStmt(_, _) => { visitor.visit_var_stmt(self) }
             Stmt::Block(_) => { visitor.visit_block_stmt(self) }
             Stmt::IfStmt(_, _, _) => { visitor.visit_if_stmt(self) }
+            Stmt::WhileStmt(_, _) => { visitor.visit_while_stmt(self) }
         }
     }
 }
@@ -83,6 +86,8 @@ pub enum ParserError {
     ExpectRightBrace { line: usize },
     #[fail(display = "Expect '()' after 'if'. (line {})", line)]
     ExpectIfParen { line: usize },
+    #[fail(display = "Expect '()' after 'while'. (line {})", line)]
+    ExpectWhileParen { line: usize },
 }
 
 use ParserError::*;
@@ -142,7 +147,20 @@ impl Parser {
         if self.matches(vec![IF]) {
             return self.if_statement();
         }
+        if self.matches(vec![WHILE]) {
+            return self.while_statement();
+        }
         self.expr_stmt()
+    }
+
+    fn while_statement(&mut self) -> StmtResult {
+        let line = self.previous().pos.line;
+        self.consume(&LEFT_PAREN, || ExpectIfParen { line })?;
+        let condition = self.expression()?;
+        self.consume(&RIGHT_PAREN, || ExpectIfParen { line })?;
+        let body = self.statement()?;
+
+        Ok(Stmt::WhileStmt(condition, Box::new(body)))
     }
 
     fn if_statement(&mut self) -> StmtResult {

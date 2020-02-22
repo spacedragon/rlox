@@ -180,6 +180,16 @@ impl<W: StringWriter> StmtVisitor for Interpreter<W> {
         }
         panic!("should not reach here!")
     }
+
+    fn visit_while_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err> {
+        if let Stmt::WhileStmt(condition, body) = stmt {
+            while self.evaluate(condition)?.is_truthy() {
+                self.execute(body)?;
+            }
+            return Ok(());
+        }
+        panic!("should not reach here!")
+    }
 }
 
 impl<W: StringWriter> Visitor<ValueResult> for Interpreter<W> {
