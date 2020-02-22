@@ -9,14 +9,16 @@ pub trait Visitor<R> {
     fn visit_literal(&mut self, expr: &Expr) -> R;
     fn visit_var(&mut self, expr: &Expr) -> R;
     fn visit_assign(&mut self, expr: &Expr) -> R;
+    fn visit_logical(&mut self, expr: &Expr) -> R;
 }
 
 pub trait StmtVisitor {
     type Err;
-    fn visit_expr_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err> ;
+    fn visit_expr_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err>;
     fn visit_print_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err>;
     fn visit_var_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err>;
     fn visit_block_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err>;
+    fn visit_if_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err>;
 }
 
 #[derive(Debug)]
@@ -24,6 +26,7 @@ pub enum Expr {
     Assign(Token, Box<Expr>),
     Binary(Box<Expr>, Token, Box<Expr>),
     Literal(Token),
+    Logical(Box<Expr>, Token, Box<Expr>),
     Grouping(Box<Expr>),
     Unary(Token, Box<Expr>),
     Variable(Token),
@@ -37,7 +40,8 @@ impl Expr {
             Expr::Grouping(_) => visitor.visit_grouping(self),
             Expr::Unary(_, _) => visitor.visit_unary(self),
             Expr::Variable(_) => visitor.visit_var(self),
-            Expr::Assign(_, _) => visitor.visit_assign(self)
+            Expr::Assign(_, _) => visitor.visit_assign(self),
+            Expr::Logical(_,_,_) => visitor.visit_logical(self)
         }
     }
 }
@@ -48,15 +52,17 @@ pub enum Stmt {
     PrintStmt(Expr),
     VarStmt(Token, Expr),
     Block(Vec<Stmt>),
+    IfStmt(Expr, Box<Stmt>, Option<Box<Stmt>>),
 }
 
 impl Stmt {
-    pub fn accept<E>(&self, visitor: &mut dyn StmtVisitor<Err = E>) -> Result<(), E> {
+    pub fn accept<E>(&self, visitor: &mut dyn StmtVisitor<Err=E>) -> Result<(), E> {
         match self {
             Stmt::ExprStmt(_) => { visitor.visit_expr_stmt(self) }
             Stmt::PrintStmt(_) => { visitor.visit_print_stmt(self) }
             Stmt::VarStmt(_, _) => { visitor.visit_var_stmt(self) }
-            Stmt::Block(_) => { visitor.visit_block_stmt(self)}
+            Stmt::Block(_) => { visitor.visit_block_stmt(self) }
+            Stmt::IfStmt(_, _, _) => { visitor.visit_if_stmt(self) }
         }
     }
 }
@@ -73,8 +79,10 @@ pub enum ParserError {
     ExpectVarName,
     #[fail(display = "Invalid assignment target. (line {})", line)]
     InvalidAssign { line: usize },
-    #[fail(display = "Expect '}}' after block. (line {})",  line)]
+    #[fail(display = "Expect '}}' after block. (line {})", line)]
     ExpectRightBrace { line: usize },
+    #[fail(display = "Expect '()' after 'if'. (line {})", line)]
+    ExpectIfParen { line: usize },
 }
 
 use ParserError::*;
@@ -83,6 +91,8 @@ pub struct Parser {
     tokens: Vec<Token>,
     current: usize,
 }
+
+type StmtResult = Result<Stmt, ParserError>;
 
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
@@ -97,14 +107,14 @@ impl Parser {
         Ok(result)
     }
 
-    fn declaration(&mut self) -> Result<Stmt, ParserError> {
+    fn declaration(&mut self) -> StmtResult {
         if self.matches(vec![VAR]) {
             return self.var_declaration();
         }
         self.statement()
     }
 
-    fn var_declaration(&mut self) -> Result<Stmt, ParserError> {
+    fn var_declaration(&mut self) -> StmtResult {
         let token = self.peek();
         if let IDENTIFIER(ref _name) = token.token_type {
             let name = token.clone();
@@ -122,17 +132,33 @@ impl Parser {
         Err(ExpectVarName)
     }
 
-    fn statement(&mut self) -> Result<Stmt, ParserError> {
+    fn statement(&mut self) -> StmtResult {
         if self.matches(vec![PRINT]) {
             return self.print_stmt();
         }
         if self.matches(vec![LEFT_BRACE]) {
-            return self.block()
+            return self.block();
+        }
+        if self.matches(vec![IF]) {
+            return self.if_statement();
         }
         self.expr_stmt()
     }
 
-    fn block(&mut self) -> Result<Stmt, ParserError> {
+    fn if_statement(&mut self) -> StmtResult {
+        let line = self.previous().pos.line;
+        self.consume(&LEFT_PAREN, || ExpectIfParen { line })?;
+        let condition = self.expression()?;
+        self.consume(&RIGHT_PAREN, || ExpectIfParen { line })?;
+        let then_branch = self.statement()?;
+        let mut else_branch: Option<Box<Stmt>> = None;
+        if self.matches(vec![ELSE]) {
+            else_branch = Some(Box::new(self.statement()?));
+        }
+        Ok(Stmt::IfStmt(condition, Box::new(then_branch), else_branch))
+    }
+
+    fn block(&mut self) -> StmtResult {
         let mut stmts = vec![];
         while !self.check(&RIGHT_BRACE) && !self.is_at_end() {
             let stmt = self.declaration()?;
@@ -143,14 +169,14 @@ impl Parser {
         Ok(Stmt::Block(stmts))
     }
 
-    fn print_stmt(&mut self) -> Result<Stmt, ParserError> {
+    fn print_stmt(&mut self) -> StmtResult {
         let expr = self.expression()?;
         let line = self.previous().pos.line;
         self.consume(&SEMICOLON, || ExpectSemi { line })?;
         Ok(Stmt::PrintStmt(expr))
     }
 
-    fn expr_stmt(&mut self) -> Result<Stmt, ParserError> {
+    fn expr_stmt(&mut self) -> StmtResult {
         let expr = self.expression()?;
         let line = self.previous().pos.line;
         self.consume(&SEMICOLON, || ExpectSemi { line })?;
@@ -166,22 +192,43 @@ impl Parser {
     }
 
     fn assignment(&mut self) -> Result<Expr, ParserError> {
-        let expr = self.equality()?;
+        let expr = self.or()?;
         if self.matches(vec![EQUAL]) {
             let equals = self.previous();
             let line = equals.pos.line;
             let value = self.assignment()?;
-            match expr {
+            return match expr {
                 Expr::Variable(t) => {
-                    return Ok(Expr::Assign(t, Box::new(value)));
+                    Ok(Expr::Assign(t, Box::new(value)))
                 }
                 _ => {
-                    return Err(ParserError::InvalidAssign { line })
+                    Err(ParserError::InvalidAssign { line })
                 }
             }
         }
         Ok(expr)
     }
+
+    fn or(&mut self) -> Result<Expr, ParserError> {
+        let mut expr = self.and()?;
+        while self.matches(vec![OR]) {
+            let operator = self.previous().clone();
+            let right = self.and()?;
+            expr = Expr::Logical(Box::new(expr), operator, Box::new(right));
+        }
+        Ok(expr)
+    }
+
+    fn and(&mut self) -> Result<Expr, ParserError> {
+        let mut expr = self.equality()?;
+        while self.matches(vec![AND]) {
+            let operator = self.previous().clone();
+            let right = self.equality()?;
+            expr = Expr::Logical(Box::new(expr), operator, Box::new(right));
+        }
+        Ok(expr)
+    }
+
 
     fn equality(&mut self) -> Result<Expr, ParserError> {
         let mut expr = self.comparison()?;

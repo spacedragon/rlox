@@ -168,6 +168,18 @@ impl<W: StringWriter> StmtVisitor for Interpreter<W> {
     fn visit_block_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err> {
        self.execute_block(stmt)
     }
+
+    fn visit_if_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err> {
+        if let Stmt::IfStmt(condition, then_branch, else_branch) = stmt {
+            if self.evaluate(condition)?.is_truthy() {
+                self.execute(then_branch)?;
+            } else if let Some(else_branch) = else_branch {
+                self.execute(else_branch)?;
+            }
+            return Ok(());
+        }
+        panic!("should not reach here!")
+    }
 }
 
 impl<W: StringWriter> Visitor<ValueResult> for Interpreter<W> {
@@ -264,6 +276,18 @@ impl<W: StringWriter> Visitor<ValueResult> for Interpreter<W> {
             return Ok(value);
         }
         panic!("not a var expr")
+    }
+
+    fn visit_logical(&mut self, expr: &Expr) -> ValueResult {
+        if let Expr::Logical(lhs, token, rhs) = expr {
+            let left = self.evaluate(lhs)?;
+            return match token.token_type {
+                OR if left.is_truthy() => Ok(left),
+                AND if !left.is_truthy() => Ok(left),
+                _ => { self.evaluate(rhs) }
+            }
+        }
+        panic!("not a logical expr")
     }
 }
 
@@ -366,6 +390,21 @@ mod test {
                                             global b\n\
                                             global c\n"));
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_if() -> Result<(), Error> {
+        let source = "if (true) { \
+                                print \"yes\"; \
+                            }\
+                            if (\"hi\" and nil) {\
+                                print true and \"yes\"; \
+                            } else { \
+                                print nil or \"no\"; \
+                            }";
+        let result = eval(source)?;
+        assert_eq!(result, String::from("yes\nno\n"));
         Ok(())
     }
 }

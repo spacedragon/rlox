@@ -50,6 +50,13 @@ impl Visitor<String> for AstPrinter {
         }
         panic!("not a assign expr")
     }
+
+    fn visit_logical(&mut self, expr: &Expr) -> String {
+        if let Expr::Logical(_, ref t, _) = expr {
+            return format!("(logical {})", t, )
+        }
+        panic!("not a assign expr")
+    }
 }
 
 impl AstPrinter {
