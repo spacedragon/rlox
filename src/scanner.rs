@@ -1,24 +1,7 @@
-use failure::{Fail};
 use lazy_static::lazy_static;
 use strum_macros::{Display};
 
-#[derive(Debug, Fail)]
-pub enum ScannerError {
-    #[fail(display = "Unexpected character {} on line {}.", ch, line)]
-    UnexpectedCharacter {
-        ch: char,
-        line: usize,
-    },
-    #[fail(display = "Unterminated string on line {}.", line)]
-    UnterminatedString {
-        line: usize
-    },
-    #[fail(display = "Invalid Number string {} on line {}.", str, line)]
-    InvalidNumber {
-        line: usize,
-        str: String,
-    },
-}
+
 
 #[allow(non_camel_case_types)]
 #[derive(Clone, Debug, PartialEq, Display)]
@@ -110,9 +93,10 @@ pub enum TokenType {
 impl TokenType {}
 
 use TokenType::*;
-use crate::scanner::ScannerError::{UnexpectedCharacter, UnterminatedString, InvalidNumber};
+use crate::error::ScannerError::*;
 use std::collections::HashMap;
-use failure::_core::fmt::{Formatter};
+use crate::error::ScannerError;
+use std::fmt::Formatter;
 
 lazy_static! {
     static ref KEYWORDS: HashMap<&'static str, TokenType> = {
@@ -138,7 +122,7 @@ lazy_static! {
 }
 
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Pos {
     pub start: usize,
     pub len: usize,
@@ -273,10 +257,7 @@ impl Scanner {
                 self.identifier();
             }
             _ => {
-                return Result::Err(UnexpectedCharacter {
-                    ch: c,
-                    line: self.line,
-                });
+                return Result::Err(UnexpectedCharacter(c,self.line));
             }
         }
         Result::Ok(())
@@ -290,7 +271,7 @@ impl Scanner {
             self.advance();
         }
         if self.is_at_end() {
-            return Result::Err(UnterminatedString { line: self.line });
+            return Result::Err(UnterminatedString(self.line));
         }
         self.advance();
 
@@ -311,10 +292,7 @@ impl Scanner {
             self.advance();
         }
         let value_str: String = self.source[self.start..self.current].iter().collect();
-        let value: f64 = value_str.parse().map_err(|_| InvalidNumber {
-            str: value_str,
-            line: self.line,
-        })?;
+        let value: f64 = value_str.parse().map_err(|_| InvalidNumber(self.line,value_str))?;
 
         self.add_token(NUMBER(value));
         Ok(())

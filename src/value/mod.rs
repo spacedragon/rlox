@@ -3,8 +3,8 @@ pub mod callable;
 pub use self::callable::{Fun, Call};
 
 use std::fmt;
-use crate::interpreter::RuntimeError::*;
-use crate::interpreter::RuntimeError;
+use crate::error::RuntimeError::*;
+use crate::error::RuntimeError;
 use std::rc::Rc;
 
 #[derive(Debug, PartialEq, Clone)]
@@ -68,7 +68,7 @@ impl Value {
     pub fn check_number(&self) -> Result<f64, RuntimeError> {
         match self {
             Value::NUMBER(v) => Ok(*v),
-            _ => Err(OperandMustNumber {})
+            _ => Err(OperandMustNumber)
         }
     }
 }

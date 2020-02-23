@@ -1,16 +1,26 @@
 use crate::scanner::TokenType::*;
 use crate::scanner::{Token, TokenType};
-use failure::Fail;
 
 pub trait Visitor<R> {
     fn visit_binary(&mut self, expr: &Expr) -> R;
     fn visit_grouping(&mut self, expr: &Expr) -> R;
     fn visit_unary(&mut self, expr: &Expr) -> R;
     fn visit_literal(&mut self, expr: &Expr) -> R;
-    fn visit_var(&mut self, expr: &Expr) -> R;
+    fn visit_var_expr(&mut self, expr: &Expr) -> R;
     fn visit_assign(&mut self, expr: &Expr) -> R;
     fn visit_logical(&mut self, expr: &Expr) -> R;
     fn visit_call(&mut self, expr: &Expr) -> R;
+}
+
+pub trait VisitorMut<R> {
+    fn visit_binary(&mut self, expr: &mut Expr) -> R;
+    fn visit_grouping(&mut self, expr: &mut Expr) -> R;
+    fn visit_unary(&mut self, expr: &mut Expr) -> R;
+    fn visit_literal(&mut self, expr: &mut Expr) -> R;
+    fn visit_var_expr(&mut self, expr: &mut Expr) -> R;
+    fn visit_assign(&mut self, expr: &mut Expr) -> R;
+    fn visit_logical(&mut self, expr: &mut Expr) -> R;
+    fn visit_call(&mut self, expr: &mut Expr) -> R;
 }
 
 pub trait StmtVisitor {
@@ -25,17 +35,32 @@ pub trait StmtVisitor {
     fn visit_ret_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err>;
 }
 
+pub trait StmtVisitorMut {
+    type Err;
+    fn visit_expr_stmt(&mut self, stmt: &mut Stmt) -> Result<(), Self::Err>;
+    fn visit_print_stmt(&mut self, stmt: &mut Stmt) -> Result<(), Self::Err>;
+    fn visit_var_stmt(&mut self, stmt: &mut Stmt) -> Result<(), Self::Err>;
+    fn visit_block_stmt(&mut self, stmt: &mut Stmt) -> Result<(), Self::Err>;
+    fn visit_if_stmt(&mut self, stmt: &mut Stmt) -> Result<(), Self::Err>;
+    fn visit_while_stmt(&mut self, stmt: &mut Stmt) -> Result<(), Self::Err>;
+    fn visit_func_stmt(&mut self, stmt: &mut Stmt) -> Result<(), Self::Err>;
+    fn visit_ret_stmt(&mut self, stmt: &mut Stmt) -> Result<(), Self::Err>;
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
-    Assign(Token, Box<Expr>),
+    Assign(Token, Box<Expr>, i32),
     Binary(Box<Expr>, Token, Box<Expr>),
     Call(Box<Expr>, Token, Box<Vec<Expr>>),
     Literal(Token),
     Logical(Box<Expr>, Token, Box<Expr>),
     Grouping(Box<Expr>),
     Unary(Token, Box<Expr>),
-    Variable(Token),
+    Variable(Token, i32),
 }
+
+
+
 
 impl Expr {
     pub fn accept<R>(&self, visitor: &mut dyn Visitor<R>) -> R {
@@ -44,8 +69,21 @@ impl Expr {
             Expr::Literal(_) => visitor.visit_literal(self),
             Expr::Grouping(_) => visitor.visit_grouping(self),
             Expr::Unary(_, _) => visitor.visit_unary(self),
-            Expr::Variable(_) => visitor.visit_var(self),
-            Expr::Assign(_, _) => visitor.visit_assign(self),
+            Expr::Variable(_,_) => visitor.visit_var_expr(self),
+            Expr::Assign(_, _, _) => visitor.visit_assign(self),
+            Expr::Logical(_, _, _) => visitor.visit_logical(self),
+            Expr::Call(_, _, _) => visitor.visit_call(self),
+        }
+    }
+
+    pub fn accept_mut<R>(&mut self, visitor: &mut dyn VisitorMut<R>) -> R {
+        match self {
+            Expr::Binary(_, _, _) => visitor.visit_binary(self),
+            Expr::Literal(_) => visitor.visit_literal(self),
+            Expr::Grouping(_) => visitor.visit_grouping(self),
+            Expr::Unary(_, _) => visitor.visit_unary(self),
+            Expr::Variable(_,_) => visitor.visit_var_expr(self),
+            Expr::Assign(_, _, _) => visitor.visit_assign(self),
             Expr::Logical(_, _, _) => visitor.visit_logical(self),
             Expr::Call(_, _, _) => visitor.visit_call(self),
         }
@@ -77,35 +115,26 @@ impl Stmt {
             Stmt::ReturnStmt(_, _) => { visitor.visit_ret_stmt(self) }
         }
     }
+
+    pub fn accept_mut<E>(&mut self, visitor: &mut dyn StmtVisitorMut<Err=E>) -> Result<(), E> {
+        match self {
+            Stmt::ExprStmt(_) => { visitor.visit_expr_stmt(self) }
+            Stmt::PrintStmt(_) => { visitor.visit_print_stmt(self) }
+            Stmt::VarStmt(_, _) => { visitor.visit_var_stmt(self) }
+            Stmt::Block(_) => { visitor.visit_block_stmt(self) }
+            Stmt::IfStmt(_, _, _) => { visitor.visit_if_stmt(self) }
+            Stmt::WhileStmt(_, _) => { visitor.visit_while_stmt(self) }
+            Stmt::Function(_, _, _) => { visitor.visit_func_stmt(self) }
+            Stmt::ReturnStmt(_, _) => { visitor.visit_ret_stmt(self) }
+        }
+    }
 }
 
-#[derive(Debug, Fail)]
-pub enum ParserError {
-    #[fail(display = "Expect expression.(line {})", line)]
-    ExpectExpr { line: usize },
-    #[fail(display = "Expect ')' after expression. (line {})", line)]
-    ExpectRightParen { line: usize },
-    #[fail(display = "Expect ';' after expression. (line {})", line)]
-    ExpectSemi { line: usize },
-    #[fail(display = "Expect variable name.")]
-    ExpectVarName,
-    #[fail(display = "Invalid assignment target. (line {})", line)]
-    InvalidAssign { line: usize },
-    #[fail(display = "Expect '}}' after block. (line {})", line)]
-    ExpectRightBrace { line: usize },
-    #[fail(display = "Expect '()' after 'if'. (line {})", line)]
-    ExpectIfParen { line: usize },
-    #[fail(display = "Expect '()' after 'while'. (line {})", line)]
-    ExpectWhileParen { line: usize },
-    #[fail(display = "Expect '()' after 'for'. (line {})", line)]
-    ExpectForParen { line: usize },
-    #[fail(display = "{}(line {})", msg, line)]
-    ExpectError { msg: String, line: usize },
-    #[fail(display = "Cannot have more than 255 arguments.(line {})", line)]
-    ArgumentsExceedError { line: usize },
-}
 
-use ParserError::*;
+
+
+use crate::error::ParserError::*;
+use crate::error::ParserError;
 
 pub struct Parser {
     tokens: Vec<Token>,
@@ -169,10 +198,10 @@ impl Parser {
             } else {
                 Expr::Literal(Token::new(NIL, name.pos.clone()))
             };
-            self.consume(&SEMICOLON, |line| ExpectSemi { line })?;
+            self.consume(&SEMICOLON, |line| ExpectSemi(line))?;
             return Ok(Stmt::VarStmt(name, initializer));
         }
-        Err(ExpectVarName)
+        Err(ExpectVarName(token.pos.line))
     }
 
     fn statement(&mut self) -> StmtResult {
@@ -210,7 +239,7 @@ impl Parser {
     }
 
     fn for_statement(&mut self) -> StmtResult {
-        self.consume(&LEFT_PAREN, |line| ExpectForParen { line })?;
+        self.consume(&LEFT_PAREN, |line| ExpectForParen(line))?;
         let initializer = match self.peek().token_type {
             SEMICOLON => {
                 self.advance();
@@ -257,18 +286,18 @@ impl Parser {
     }
 
     fn while_statement(&mut self) -> StmtResult {
-        self.consume(&LEFT_PAREN, |line| ExpectWhileParen { line })?;
+        self.consume(&LEFT_PAREN, |line| ExpectWhileParen(line))?;
         let condition = self.expression()?;
-        self.consume(&RIGHT_PAREN, |line| ExpectWhileParen { line })?;
+        self.consume(&RIGHT_PAREN, |line| ExpectWhileParen(line))?;
         let body = self.statement()?;
 
         Ok(Stmt::WhileStmt(condition, Box::new(body)))
     }
 
     fn if_statement(&mut self) -> StmtResult {
-        self.consume(&LEFT_PAREN, |line| ExpectIfParen { line })?;
+        self.consume(&LEFT_PAREN, |line| ExpectIfParen(line))?;
         let condition = self.expression()?;
-        self.consume(&RIGHT_PAREN, |line| ExpectIfParen { line })?;
+        self.consume(&RIGHT_PAREN, |line| ExpectIfParen(line))?;
         let then_branch = self.statement()?;
         let mut else_branch: Option<Box<Stmt>> = None;
         if self.matches(vec![ELSE]) {
@@ -288,20 +317,20 @@ impl Parser {
             let stmt = self.declaration()?;
             stmts.push(stmt);
         }
-        self.consume(&RIGHT_BRACE, |line| ExpectRightBrace { line })?;
+        self.consume(&RIGHT_BRACE, |line| ExpectRightBrace(line))?;
         Ok(stmts)
     }
 
 
     fn print_stmt(&mut self) -> StmtResult {
         let expr = self.expression()?;
-        self.consume(&SEMICOLON, |line| ExpectSemi { line })?;
+        self.consume(&SEMICOLON, |line| ExpectSemi(line))?;
         Ok(Stmt::PrintStmt(expr))
     }
 
     fn expr_stmt(&mut self) -> StmtResult {
         let expr = self.expression()?;
-        self.consume(&SEMICOLON, |line| ExpectSemi { line })?;
+        self.consume(&SEMICOLON, |line| ExpectSemi(line))?;
         Ok(Stmt::ExprStmt(expr))
     }
 
@@ -320,11 +349,11 @@ impl Parser {
             let line = equals.pos.line;
             let value = self.assignment()?;
             return match expr {
-                Expr::Variable(t) => {
-                    Ok(Expr::Assign(t, Box::new(value)))
+                Expr::Variable(t,_) => {
+                    Ok(Expr::Assign(t, Box::new(value), -1))
                 }
                 _ => {
-                    Err(ParserError::InvalidAssign { line })
+                    Err(ParserError::InvalidAssign(line))
                 }
             };
         }
@@ -451,7 +480,7 @@ impl Parser {
             loop {
                 arguments.push(self.expression()?);
                 if arguments.len() > 255 {
-                    return Err(ArgumentsExceedError { line: self.peek().pos.line });
+                    return Err(ArgumentsExceedError(self.peek().pos.line));
                 }
                 if !self.matches(vec![COMMA]) {
                     break;
@@ -479,17 +508,17 @@ impl Parser {
                 self.advance();
                 let expr = self.expression()?;
                 self.consume(&RIGHT_PAREN,
-                             |line| ParserError::ExpectRightParen { line })?;
+                             |line| ParserError::ExpectRightParen(line))?;
                 Ok(Expr::Grouping(Box::new(expr)))
             }
             IDENTIFIER(_) => {
                 let token = t.clone();
                 self.advance();
-                Ok(Expr::Variable(token))
+                Ok(Expr::Variable(token, -1))
             }
             _ => {
                 let line = self.peek().pos.line;
-                Err(ParserError::ExpectExpr { line })
+                Err(ParserError::ExpectExpr(line))
             }
         }
     }
@@ -531,16 +560,16 @@ mod test {
     use crate::ast_printer::AstPrinter;
     use crate::parser::Parser;
     use crate::scanner::Scanner;
-    use failure::Error;
+    use crate::error::LoxError;
 
     #[test]
-    fn test_expr() -> Result<(), Error> {
+    fn test_expr() -> Result<(), LoxError> {
         let source = "-1 + 2 * 3/(6-5)";
         let scanner = Scanner::new(source);
         let tokens = scanner.scan_tokens()?;
         let mut parser = Parser::new(tokens);
         let expr = parser.expression()?;
-        let mut printer = AstPrinter {};
+        let mut printer = AstPrinter::new();
         assert_eq!(
             printer.print(&expr),
             "(+ (- 1) (/ (* 2 3) (group (- 6 5))))"

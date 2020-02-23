@@ -1,41 +1,15 @@
 use crate::parser::{Visitor, Expr, StmtVisitor, Stmt};
 use crate::scanner::TokenType::*;
-use failure::Fail;
 
-#[derive(Debug, Fail)]
-pub enum RuntimeError {
-    #[fail(display = "Operand must be a number.")]
-    OperandMustNumber,
-    #[fail(display = "Unexpected expression {:?}.", message)]
-    UnexpectedExpr {
-        message: String
-    },
-    #[fail(display = "Invalid binary operation.")]
-    InvalidBinaryOP,
-    #[fail(display = "Divide by zero.")]
-    DivideByZero,
-    #[fail(display = "Undefined variable {}.", name)]
-    UndefinedVar {
-        name: String
-    },
-    #[fail(display = "Expected a identifier here")]
-    ExpectIdentifier,
-    #[fail(display = "Target is not callable.")]
-    NotCallable,
-    #[fail(display = "Expected {} arguments but got {}.", expect, actual)]
-    ArgumentsSizeNotMatch { expect: i8, actual: i8 },
-    #[fail(display = "early return")]
-    ReturnValue(Value),
-}
 
-use RuntimeError::*;
 use crate::scanner::Token;
 use crate::string_writer::StringWriter;
 use crate::environment::Environment;
 use crate::value::{Value, Fun};
 use std::rc::Rc;
 use std::cell::RefCell;
-
+use crate::error::RuntimeError;
+use RuntimeError::*;
 
 type ValueResult = Result<Value, RuntimeError>;
 
@@ -88,17 +62,14 @@ impl<W: StringWriter> Interpreter<W> {
         if let Value::FUN(f) = callee {
             let actual = args.len() as i8;
             return if actual != f.arity() {
-                Err(ArgumentsSizeNotMatch {
-                    expect: f.arity(),
-                    actual,
-                })
+                Err(ArgumentsSizeNotMatch(f.arity(), actual))
             } else {
                 return match f {
                     Fun::Native(_, _, f) => {
                         Ok(f(args))
                     }
-                    Fun::UserFunc(_, _, Stmt::Function(_, params, body)) => {
-                        let mut env = Environment::new(self.globals.clone());
+                    Fun::UserFunc(_, _, Stmt::Function(_, params, body), env) => {
+                        let mut env = Environment::new(env);
                         for i in 0..params.len() {
                             if let Token { token_type: IDENTIFIER(name), .. } = &params[i] {
                                 env.define(name.clone(), args[i].clone());
@@ -183,7 +154,7 @@ impl<W: StringWriter> StmtVisitor for Interpreter<W> {
     fn visit_func_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err> {
         if let Stmt::Function(Token { token_type: IDENTIFIER(name), .. },
                               params, _body) = stmt {
-            let f: Fun = Fun::UserFunc(name.clone(), params.len() as i8, stmt.clone());
+            let f: Fun = Fun::UserFunc(name.clone(), params.len() as i8, stmt.clone(), self.env.clone());
             self.env.borrow_mut().define(name.clone(), Value::FUN(f));
             return Ok(());
         }
@@ -271,26 +242,34 @@ impl<W: StringWriter> Visitor<ValueResult> for Interpreter<W> {
                 TRUE => Ok(Value::BOOL(true)),
                 FALSE => Ok(Value::BOOL(false)),
                 _ => {
-                    Err(UnexpectedExpr { message: format!("{:?}", expr) })
+                    Err(UnexpectedExpr { 0: format!("{:?}", expr) })
                 }
             },
             _ => {
-                Err(UnexpectedExpr { message: format!("{:?}", expr) })
+                Err(UnexpectedExpr { 0: format!("{:?}", expr) })
             }
         }
     }
 
-    fn visit_var(&mut self, expr: &Expr) -> ValueResult {
-        if let Expr::Variable(t) = expr {
-            return self.env.borrow().get(t);
+    fn visit_var_expr(&mut self, expr: &Expr) -> ValueResult {
+        if let Expr::Variable(t, depth) = expr {
+            return if *depth >= 0 {
+                self.env.borrow().get_at(t, *depth as u32)
+            } else {
+                self.globals.borrow().get(t)
+            }
         }
         panic!("not a var expr")
     }
 
     fn visit_assign(&mut self, expr: &Expr) -> ValueResult {
-        if let Expr::Assign(t, expr) = expr {
+        if let Expr::Assign(t, expr, depth) = expr {
             let value = self.evaluate(expr)?;
-            self.env.borrow_mut().assign(t, &value)?;
+            if *depth >= 0 {
+                self.env.borrow_mut().assign_at(t, &value, *depth as u32)?;
+            } else {
+                self.globals.borrow_mut().assign(t, &value)?;
+            }
             return Ok(value);
         }
         panic!("not a var expr")
@@ -325,15 +304,19 @@ impl<W: StringWriter> Visitor<ValueResult> for Interpreter<W> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use failure::Error;
     use crate::scanner::Scanner;
     use crate::parser::Parser;
+    use crate::resolver::Resolver;
+    use crate::error::LoxError;
 
-    fn eval(source: &str) -> Result<String, Error> {
+    fn eval(source: &str) -> Result<String, LoxError> {
         let scanner = Scanner::new(source);
         let tokens = scanner.scan_tokens()?;
         let parser = Parser::new(tokens);
-        let stmts = parser.parse()?;
+        let mut stmts = parser.parse()?;
+        let mut resolver = Resolver::new();
+        resolver.resolve(&mut stmts);
+
         let output = String::new();
         let mut interpreter = Interpreter::new(output);
         interpreter.interpret(&stmts)?;
@@ -341,7 +324,7 @@ mod test {
     }
 
     #[test]
-    fn test_expr() -> Result<(), Error> {
+    fn test_expr() -> Result<(), LoxError> {
         let source = "print -1 + 2 * 3/(6-5);";
         let result = eval(source)?;
         assert_eq!(result, String::from("5\n"));
@@ -350,7 +333,7 @@ mod test {
 
 
     #[test]
-    fn test_compare() -> Result<(), Error> {
+    fn test_compare() -> Result<(), LoxError> {
         let source = "print 1 > 2;";
         let result = eval(source)?;
         assert_eq!(result, String::from("false\n"));
@@ -358,7 +341,7 @@ mod test {
     }
 
     #[test]
-    fn test_string_plus() -> Result<(), Error> {
+    fn test_string_plus() -> Result<(), LoxError> {
         let source = "print 1 + \"2\";";
         let result = eval(source)?;
         assert_eq!(result, String::from("12\n"));
@@ -366,7 +349,7 @@ mod test {
     }
 
     #[test]
-    fn test_stmts() -> Result<(), Error> {
+    fn test_stmts() -> Result<(), LoxError> {
         let source = "print  \"one\";\n print true; print 2+1;";
         let result = eval(source)?;
         assert_eq!(result, String::from("one\ntrue\n3\n"));
@@ -374,7 +357,7 @@ mod test {
     }
 
     #[test]
-    fn test_vars() -> Result<(), Error> {
+    fn test_vars() -> Result<(), LoxError> {
         let source = "var a = 1;\n\
                             var b = 2;\n\
                             print a + b;\n";
@@ -389,7 +372,7 @@ mod test {
     }
 
     #[test]
-    fn test_scope() -> Result<(), Error> {
+    fn test_scope() -> Result<(), LoxError> {
         let source = "var a = \"global a\"; \
                             var b = \"global b\"; \
                             var c = \"global c\"; \
@@ -424,7 +407,7 @@ mod test {
     }
 
     #[test]
-    fn test_if() -> Result<(), Error> {
+    fn test_if() -> Result<(), LoxError> {
         let source = "if (true) { \
                                 print \"yes\"; \
                             }\
@@ -439,7 +422,7 @@ mod test {
     }
 
     #[test]
-    fn test_while() -> Result<(), Error> {
+    fn test_while() -> Result<(), LoxError> {
         let source = "var b = 1; \
                             var a = 0; \
                             while (a < 10000) { \
@@ -474,7 +457,7 @@ mod test {
     }
 
     #[test]
-    fn test_native() -> Result<(), Error> {
+    fn test_native() -> Result<(), LoxError> {
         let source = "print clock();";
         let result = eval(source)?;
         println!("{}", result);
@@ -484,7 +467,7 @@ mod test {
     }
 
     #[test]
-    fn test_func() -> Result<(), Error> {
+    fn test_func() -> Result<(), LoxError> {
         let source = "fun fibonacci(n) { \n\
                               if (n <= 1) return n; \n\
                               return fibonacci(n - 2) + fibonacci(n - 1); \n\

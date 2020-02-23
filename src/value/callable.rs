@@ -1,6 +1,8 @@
 use super::*;
 use std::fmt::{Debug, Formatter};
 use crate::parser::Stmt;
+use crate::environment::Environment;
+use std::cell::RefCell;
 
 type NativeFn = fn(args: Vec<Value>) -> Value;
 
@@ -13,7 +15,7 @@ type Func = Rc<dyn FnMut(Vec<Value>) -> Value>;
 #[derive(Clone, PartialEq)]
 pub enum Fun {
     Native(String, i8, NativeFn),
-    UserFunc(String, i8, Stmt)
+    UserFunc(String, i8, Stmt, Rc<RefCell<Environment>>)
 }
 
 
@@ -30,14 +32,14 @@ impl Fun {
     pub fn arity(&self) -> i8 {
         match self {
             Fun::Native(_, arity, _) => *arity,
-            Fun::UserFunc(_, arity, _) => *arity,
+            Fun::UserFunc(_, arity, _, _) => *arity,
         }
     }
 
     pub fn name(&self) -> &str {
         match self {
             Fun::Native(name, _, _) => name.as_str(),
-            Fun::UserFunc(name, _, _) => name.as_str(),
+            Fun::UserFunc(name, _, _,_) => name.as_str(),
         }
     }
 }

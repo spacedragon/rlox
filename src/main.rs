@@ -8,6 +8,7 @@ use crate::parser::Parser;
 use crate::interpreter::Interpreter;
 use crate::string_writer::StringWriter;
 use std::io::{Stdout, Write};
+use crate::error::LoxError;
 
 
 mod scanner;
@@ -17,6 +18,8 @@ mod interpreter;
 mod string_writer;
 mod environment;
 mod value;
+mod resolver;
+mod error;
 
 #[derive(StructOpt, Debug)]
 #[structopt(name = "rlox")]
@@ -46,7 +49,7 @@ impl StringWriter for Stdout {
 }
 
 
-fn main() -> Result<(), failure::Error>{
+fn main() -> Result<(), LoxError>{
     env_logger::init();
     info!("starting up");
     let matches = Opt::from_args();

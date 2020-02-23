@@ -1,8 +1,10 @@
-use crate::parser::{Visitor, Expr};
+use crate::parser::{Visitor, Expr, StmtVisitor, Stmt};
 use crate::scanner::TokenType::*;
 use crate::scanner::Token;
 
-pub struct AstPrinter;
+pub struct AstPrinter{
+    s: String
+}
 
 impl Visitor<String> for AstPrinter {
 
@@ -37,16 +39,16 @@ impl Visitor<String> for AstPrinter {
         }
     }
 
-    fn visit_var(&mut self, expr: &Expr) -> String {
-        if let Expr::Variable(ref t) = expr {
-            return format!("(var {})", t)
+    fn visit_var_expr(&mut self, expr: &Expr) -> String {
+        if let Expr::Variable(Token{ token_type: IDENTIFIER(name), .. }, depth) = expr {
+            return format!("(var {} {})", name, depth)
         }
         panic!("not a var expr")
     }
 
     fn visit_assign(&mut self, expr: &Expr) -> String {
-        if let Expr::Assign(ref t, ..) = expr {
-            return format!("(assign {})", t, )
+        if let Expr::Assign(ref t, _, depth) = expr {
+            return format!("(assign {} d{})", t, depth)
         }
         panic!("not a assign expr")
     }
@@ -63,13 +65,103 @@ impl Visitor<String> for AstPrinter {
             return format!("(call {:?})", callee)
         }
         panic!("not a call expr")
+    }
+}
 
+impl StmtVisitor for AstPrinter {
+    type Err = ();
+
+    fn visit_expr_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err> {
+        if let Stmt::ExprStmt(expr) = stmt {
+            let s = expr.accept(self);
+            self.s.push_str(format!("<{}>\n", s).as_str());
+        }
+        Ok(())
+    }
+
+    fn visit_print_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err> {
+        if let Stmt::PrintStmt(expr) = stmt {
+            let s = expr.accept(self);
+            self.s.push_str(format!("<print {}>\n", s).as_str());
+        }
+        Ok(())
+    }
+
+    fn visit_var_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err> {
+        if let Stmt::VarStmt(Token{ token_type: IDENTIFIER(name), .. }, expr) = stmt {
+            let s = expr.accept(self);
+            self.s.push_str(format!("<var {}={}>\n", name, s).as_str());
+        }
+        Ok(())
+    }
+
+    fn visit_block_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err> {
+        if let Stmt::Block(stmts) = stmt {
+            let t = String::new();
+            for stmt in stmts {
+                stmt.accept(self)?;
+            }
+            self.s.push_str(format!("<block {}>\n", t).as_str());
+        }
+        Ok(())
+    }
+
+    fn visit_if_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err> {
+        if let Stmt::IfStmt(condition, then, else_branch) = stmt {
+            let c = condition.accept(self);
+            then.accept(self)?;
+            if let Some(s) = else_branch {
+                s.accept(self)?;
+            }
+            self.s.push_str(format!("<if {}>\n", c).as_str());
+        }
+        Ok(())
+    }
+
+    fn visit_while_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err> {
+        if let Stmt::WhileStmt(cod, body) = stmt {
+            let c = cod.accept(self);
+             body.accept(self)?;
+            self.s.push_str(format!("<while {}>\n", c).as_str());
+        }
+        Ok(())
+    }
+
+    fn visit_func_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err> {
+        if let Stmt::Function(name, _params, stmts) = stmt {
+            let  t = String::new();
+            for stmt in stmts {
+                stmt.accept(self)?;
+            }
+            self.s.push_str(format!("<fun {} {}>\n", name, t ).as_str());
+        }
+        Ok(())
+    }
+
+    fn visit_ret_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err> {
+        if let Stmt::ReturnStmt(_t, expr) = stmt {
+            let e = expr.accept(self);
+            self.s.push_str(format!("<ret {}>\n", e).as_str());
+        }
+        Ok(())
     }
 }
 
 impl AstPrinter {
+    pub fn new() -> Self{
+        AstPrinter {
+            s: String::new()
+        }
+    }
     pub fn print(&mut self, expr: &Expr) -> String {
         expr.accept(self)
+    }
+
+    pub fn print_stmts(&mut self, stmts: &Vec<Stmt>) -> &str {
+        for stmt in stmts {
+            stmt.accept(self).expect("error!");
+        }
+        self.s.as_str()
     }
 }
 
@@ -80,7 +172,7 @@ mod test {
     #[test]
     fn test_string() {
         let expression = Expr::Literal(Token::new(STRING(String::from("test")), Pos::default()));
-        let mut printer = AstPrinter {};
+        let mut printer = AstPrinter::new();
         assert_eq!(expression.accept(&mut printer), String::from("\"test\""))
     }
 
@@ -99,7 +191,7 @@ mod test {
             ))
 
         );
-        let mut printer = AstPrinter {};
+        let mut printer = AstPrinter::new();
         assert_eq!(expression.accept(& mut printer), String::from("(* (- 123) (group 45.67))"))
     }
 }
