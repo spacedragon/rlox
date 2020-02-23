@@ -1,5 +1,3 @@
-
-
 #![allow(dead_code)]
 
 use structopt::StructOpt;
@@ -18,6 +16,7 @@ mod ast_printer;
 mod interpreter;
 mod string_writer;
 mod environment;
+mod value;
 
 #[derive(StructOpt, Debug)]
 #[structopt(name = "rlox")]

@@ -2,56 +2,6 @@ use crate::parser::{Visitor, Expr, StmtVisitor, Stmt};
 use crate::scanner::TokenType::*;
 use failure::Fail;
 
-use std::fmt;
-
-
-#[derive(Debug, PartialEq, Clone)]
-pub enum Value {
-    STRING(String),
-    NUMBER(f64),
-    BOOL(bool),
-    OBJECT,
-    FUN,
-    NIL,
-}
-
-impl From<f64> for Value {
-    fn from(v: f64) -> Self {
-        Value::NUMBER(v)
-    }
-}
-
-impl From<String> for Value {
-    fn from(s: String) -> Self {
-        Value::STRING(s)
-    }
-}
-
-impl From<&str> for Value {
-    fn from(s: &str) -> Self {
-        Value::STRING(String::from(s))
-    }
-}
-
-impl From<bool> for Value {
-    fn from(b: bool) -> Self {
-        Value::BOOL(b)
-    }
-}
-
-impl fmt::Display for Value {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Value::STRING(s) => { write!(f, "{}", s.as_str()) }
-            Value::NUMBER(v) => { write!(f, "{}", v) }
-            Value::BOOL(b) => { write!(f, "{}", *b) }
-            Value::OBJECT => { write!(f, "(object)") }
-            Value::FUN => { write!(f, "(fn)") }
-            Value::NIL => { write!(f, "nil") }
-        }
-    }
-}
-
 #[derive(Debug, Fail)]
 pub enum RuntimeError {
     #[fail(display = "Operand must be a number.")]
@@ -70,44 +20,38 @@ pub enum RuntimeError {
     },
     #[fail(display = "Expected a identifier here")]
     ExpectIdentifier,
+    #[fail(display = "Target is not callable.")]
+    NotCallable,
+    #[fail(display = "Expected {} arguments but got {}.", expect, actual)]
+    ArgumentsSizeNotMatch { expect: i8, actual: i8 },
+    #[fail(display = "early return")]
+    ReturnValue(Value),
 }
 
 use RuntimeError::*;
 use crate::scanner::Token;
 use crate::string_writer::StringWriter;
 use crate::environment::Environment;
+use crate::value::{Value, Fun};
+use std::rc::Rc;
+use std::cell::RefCell;
 
-impl Value {
-    fn is_truthy(&self) -> bool {
-        match self {
-            Value::BOOL(b) => *b,
-            Value::STRING(s) => !s.is_empty(),
-            Value::NUMBER(v) => *v != 0f64,
-            Value::NIL => false,
-            _ => true
-        }
-    }
-
-    fn check_number(&self) -> Result<f64, RuntimeError> {
-        match self {
-            Value::NUMBER(v) => Ok(*v),
-            _ => Err(OperandMustNumber {})
-        }
-    }
-}
 
 type ValueResult = Result<Value, RuntimeError>;
 
 pub struct Interpreter<W: StringWriter> {
     output: W,
-    env: Box<Environment>,
+    globals: Rc<RefCell<Environment>>,
+    env: Rc<RefCell<Environment>>,
 }
 
 impl<W: StringWriter> Interpreter<W> {
     pub fn new(output: W) -> Self {
+        let globals = Rc::new(RefCell::new(Environment::global()));
         Interpreter {
             output,
-            env: Box::new(Environment::new()),
+            env: globals.clone(),
+            globals,
         }
     }
 
@@ -124,15 +68,54 @@ impl<W: StringWriter> Interpreter<W> {
     fn execute(&mut self, stmt: &Stmt) -> Result<(), RuntimeError> {
         stmt.accept(self)
     }
-    fn execute_block(&mut self, stmt: &Stmt) -> Result<(), RuntimeError> {
-        if let Stmt::Block(stmts) = stmt {
-            self.env.new_scope();
-            for stmt in stmts {
-                self.execute(stmt)?;
+
+
+    fn execute_stmts(&mut self, stmts: &Vec<Stmt>, env: Rc<RefCell<Environment>>) -> Result<(), RuntimeError> {
+        let prev = self.env.clone();
+        self.env = env;
+        for stmt in stmts {
+            if let Err(e) = self.execute(stmt) {
+                self.env = prev;
+                return Err(e);
             }
-            self.env.pop_scope();
         }
+        self.env = prev;
+
         Ok(())
+    }
+
+    fn execute_function(&mut self, callee: Value, args: Vec<Value>) -> ValueResult {
+        if let Value::FUN(f) = callee {
+            let actual = args.len() as i8;
+            return if actual != f.arity() {
+                Err(ArgumentsSizeNotMatch {
+                    expect: f.arity(),
+                    actual,
+                })
+            } else {
+                return match f {
+                    Fun::Native(_, _, f) => {
+                        Ok(f(args))
+                    }
+                    Fun::UserFunc(_, _, Stmt::Function(_, params, body)) => {
+                        let mut env = Environment::new(self.globals.clone());
+                        for i in 0..params.len() {
+                            if let Token { token_type: IDENTIFIER(name), .. } = &params[i] {
+                                env.define(name.clone(), args[i].clone());
+                            }
+                        }
+                        if let Err(ReturnValue(v)) = self.execute_stmts(&body,
+                                                                        Rc::new(RefCell::new(env))) {
+                            return Ok(v)
+                        }
+
+                        Ok(Value::NIL)
+                    }
+                    _ => { panic!("not a function") }
+                };
+            };
+        }
+        panic!("not a function")
     }
 }
 
@@ -159,14 +142,20 @@ impl<W: StringWriter> StmtVisitor for Interpreter<W> {
     fn visit_var_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err> {
         if let Stmt::VarStmt(Token { token_type: IDENTIFIER(name), .. }, init) = stmt {
             let value = self.evaluate(init)?;
-            self.env.define(name.clone(), value);
+
+            self.env.borrow_mut().define(name.clone(), value);
             return Ok(());
         }
         panic!("should not reach here!")
     }
 
     fn visit_block_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err> {
-       self.execute_block(stmt)
+        if let Stmt::Block(stmts) = stmt {
+            let new_env = Environment::new(self.env.clone());
+            self.execute_stmts(stmts, Rc::new(RefCell::new(new_env)))?;
+            return Ok(());
+        }
+        panic!("should not reach here!")
     }
 
     fn visit_if_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err> {
@@ -187,6 +176,25 @@ impl<W: StringWriter> StmtVisitor for Interpreter<W> {
                 self.execute(body)?;
             }
             return Ok(());
+        }
+        panic!("should not reach here!")
+    }
+
+    fn visit_func_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err> {
+        if let Stmt::Function(Token { token_type: IDENTIFIER(name), .. },
+                              params, _body) = stmt {
+            let f: Fun = Fun::UserFunc(name.clone(), params.len() as i8, stmt.clone());
+            self.env.borrow_mut().define(name.clone(), Value::FUN(f));
+            return Ok(());
+        }
+
+        panic!("should not reach here!")
+    }
+
+    fn visit_ret_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err> {
+        if let Stmt::ReturnStmt(_token, value) = stmt {
+            let value = self.evaluate(value)?;
+            return Err(ReturnValue(value));
         }
         panic!("should not reach here!")
     }
@@ -274,7 +282,7 @@ impl<W: StringWriter> Visitor<ValueResult> for Interpreter<W> {
 
     fn visit_var(&mut self, expr: &Expr) -> ValueResult {
         if let Expr::Variable(t) = expr {
-            return self.env.get(t);
+            return self.env.borrow().get(t);
         }
         panic!("not a var expr")
     }
@@ -282,7 +290,7 @@ impl<W: StringWriter> Visitor<ValueResult> for Interpreter<W> {
     fn visit_assign(&mut self, expr: &Expr) -> ValueResult {
         if let Expr::Assign(t, expr) = expr {
             let value = self.evaluate(expr)?;
-            self.env.assign(t, &value)?;
+            self.env.borrow_mut().assign(t, &value)?;
             return Ok(value);
         }
         panic!("not a var expr")
@@ -295,9 +303,21 @@ impl<W: StringWriter> Visitor<ValueResult> for Interpreter<W> {
                 OR if left.is_truthy() => Ok(left),
                 AND if !left.is_truthy() => Ok(left),
                 _ => { self.evaluate(rhs) }
-            }
+            };
         }
         panic!("not a logical expr")
+    }
+
+    fn visit_call(&mut self, expr: &Expr) -> ValueResult {
+        if let Expr::Call(callee, _token, arguments) = expr {
+            let callee = self.evaluate(callee)?;
+            let mut args = vec![];
+            for arg in arguments.iter() {
+                args.push(self.evaluate(arg)?)
+            }
+            return self.execute_function(callee, args);
+        }
+        panic!("not a call expr")
     }
 }
 
@@ -415,6 +435,87 @@ mod test {
                             }";
         let result = eval(source)?;
         assert_eq!(result, String::from("yes\nno\n"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_while() -> Result<(), Error> {
+        let source = "var b = 1; \
+                            var a = 0; \
+                            while (a < 10000) { \
+                              print a; \
+                              var temp = a; \
+                              a = b; \
+                              b = temp + b; \
+                            }";
+        let result = eval(source)?;
+        assert_eq!(result, String::from("0\n\
+                                            1\n\
+                                            1\n\
+                                            2\n\
+                                            3\n\
+                                            5\n\
+                                            8\n\
+                                            13\n\
+                                            21\n\
+                                            34\n\
+                                            55\n\
+                                            89\n\
+                                            144\n\
+                                            233\n\
+                                            377\n\
+                                            610\n\
+                                            987\n\
+                                            1597\n\
+                                            2584\n\
+                                            4181\n\
+                                            6765\n"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_native() -> Result<(), Error> {
+        let source = "print clock();";
+        let result = eval(source)?;
+        println!("{}", result);
+
+        assert!(!result.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn test_func() -> Result<(), Error> {
+        let source = "fun fibonacci(n) { \n\
+                              if (n <= 1) return n; \n\
+                              return fibonacci(n - 2) + fibonacci(n - 1); \n\
+                            } \n\
+                             \n\
+                            for (var i = 0; i < 20; i = i + 1) { \n\
+                              print fibonacci(i); \n\
+                            }";
+        let result = eval(source)?;
+
+
+        assert_eq!(result, "0\n\
+                            1\n\
+                            1\n\
+                            2\n\
+                            3\n\
+                            5\n\
+                            8\n\
+                            13\n\
+                            21\n\
+                            34\n\
+                            55\n\
+                            89\n\
+                            144\n\
+                            233\n\
+                            377\n\
+                            610\n\
+                            987\n\
+                            1597\n\
+                            2584\n\
+                            4181\n");
         Ok(())
     }
 }

@@ -10,6 +10,7 @@ pub trait Visitor<R> {
     fn visit_var(&mut self, expr: &Expr) -> R;
     fn visit_assign(&mut self, expr: &Expr) -> R;
     fn visit_logical(&mut self, expr: &Expr) -> R;
+    fn visit_call(&mut self, expr: &Expr) -> R;
 }
 
 pub trait StmtVisitor {
@@ -20,12 +21,15 @@ pub trait StmtVisitor {
     fn visit_block_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err>;
     fn visit_if_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err>;
     fn visit_while_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err>;
+    fn visit_func_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err>;
+    fn visit_ret_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err>;
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     Assign(Token, Box<Expr>),
     Binary(Box<Expr>, Token, Box<Expr>),
+    Call(Box<Expr>, Token, Box<Vec<Expr>>),
     Literal(Token),
     Logical(Box<Expr>, Token, Box<Expr>),
     Grouping(Box<Expr>),
@@ -42,19 +46,22 @@ impl Expr {
             Expr::Unary(_, _) => visitor.visit_unary(self),
             Expr::Variable(_) => visitor.visit_var(self),
             Expr::Assign(_, _) => visitor.visit_assign(self),
-            Expr::Logical(_,_,_) => visitor.visit_logical(self)
+            Expr::Logical(_, _, _) => visitor.visit_logical(self),
+            Expr::Call(_, _, _) => visitor.visit_call(self),
         }
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
     ExprStmt(Expr),
     PrintStmt(Expr),
+    ReturnStmt(Token, Expr),
     VarStmt(Token, Expr),
     Block(Vec<Stmt>),
     IfStmt(Expr, Box<Stmt>, Option<Box<Stmt>>),
-    WhileStmt(Expr, Box<Stmt>)
+    WhileStmt(Expr, Box<Stmt>),
+    Function(Token, Vec<Token>, Vec<Stmt>),
 }
 
 impl Stmt {
@@ -66,6 +73,8 @@ impl Stmt {
             Stmt::Block(_) => { visitor.visit_block_stmt(self) }
             Stmt::IfStmt(_, _, _) => { visitor.visit_if_stmt(self) }
             Stmt::WhileStmt(_, _) => { visitor.visit_while_stmt(self) }
+            Stmt::Function(_, _, _) => { visitor.visit_func_stmt(self) }
+            Stmt::ReturnStmt(_, _) => { visitor.visit_ret_stmt(self) }
         }
     }
 }
@@ -88,6 +97,12 @@ pub enum ParserError {
     ExpectIfParen { line: usize },
     #[fail(display = "Expect '()' after 'while'. (line {})", line)]
     ExpectWhileParen { line: usize },
+    #[fail(display = "Expect '()' after 'for'. (line {})", line)]
+    ExpectForParen { line: usize },
+    #[fail(display = "{}(line {})", msg, line)]
+    ExpectError { msg: String, line: usize },
+    #[fail(display = "Cannot have more than 255 arguments.(line {})", line)]
+    ArgumentsExceedError { line: usize },
 }
 
 use ParserError::*;
@@ -116,14 +131,37 @@ impl Parser {
         if self.matches(vec![VAR]) {
             return self.var_declaration();
         }
+        if self.matches(vec![FUN]) {
+            return self.function("function");
+        }
         self.statement()
     }
+
+    fn function(&mut self, kind: &'static str) -> StmtResult {
+        let name =
+            self.expect_id(format!("Expect {} name.", kind))?.clone();
+
+        self.expect(&LEFT_PAREN, "Expect '(' after function name.".to_string())?;
+
+        let mut params = vec![];
+        while !self.matches(vec![RIGHT_PAREN]) {
+            let param = self.expect_id(String::from("Expect parameter name."))?;
+            params.push(param.clone());
+            self.matches(vec![COMMA]);
+        }
+        self.expect(&LEFT_BRACE,
+                    format!("Expect '{{' before {} body.", kind))?;
+
+        let body = self.block()?;
+
+        Ok(Stmt::Function(name, params, body))
+    }
+
 
     fn var_declaration(&mut self) -> StmtResult {
         let token = self.peek();
         if let IDENTIFIER(ref _name) = token.token_type {
             let name = token.clone();
-            let line = token.pos.line;
             self.advance();
             let initializer: Expr = if self.check(&EQUAL) {
                 self.advance();
@@ -131,7 +169,7 @@ impl Parser {
             } else {
                 Expr::Literal(Token::new(NIL, name.pos.clone()))
             };
-            self.consume(&SEMICOLON, || ExpectSemi { line })?;
+            self.consume(&SEMICOLON, |line| ExpectSemi { line })?;
             return Ok(Stmt::VarStmt(name, initializer));
         }
         Err(ExpectVarName)
@@ -142,7 +180,7 @@ impl Parser {
             return self.print_stmt();
         }
         if self.matches(vec![LEFT_BRACE]) {
-            return self.block();
+            return self.block_stmt();
         }
         if self.matches(vec![IF]) {
             return self.if_statement();
@@ -150,24 +188,87 @@ impl Parser {
         if self.matches(vec![WHILE]) {
             return self.while_statement();
         }
+        if self.matches(vec![FOR]) {
+            return self.for_statement();
+        }
+        if self.matches(vec![RETURN]) {
+            return self.return_statement();
+        }
         self.expr_stmt()
     }
 
+    fn return_statement(&mut self) -> StmtResult {
+        let token = self.previous().clone();
+        let value: Expr = if !self.check(&SEMICOLON) {
+            self.expression()?
+        } else {
+            Expr::Literal(Token { token_type: NIL, pos: token.pos.clone() })
+        };
+
+        self.expect(&SEMICOLON, "Expect ';' after return.".to_string())?;
+        Ok(Stmt::ReturnStmt(token, value))
+    }
+
+    fn for_statement(&mut self) -> StmtResult {
+        self.consume(&LEFT_PAREN, |line| ExpectForParen { line })?;
+        let initializer = match self.peek().token_type {
+            SEMICOLON => {
+                self.advance();
+                None
+            }
+            VAR => {
+                self.advance();
+                Some(self.var_declaration()?)
+            }
+            _ => { Some(self.expr_stmt()?) }
+        };
+        let condition = if !self.check(&SEMICOLON) {
+            Some(self.expression()?)
+        } else {
+            None
+        };
+        self.consume(&SEMICOLON, |line| ExpectError {
+            msg: String::from("Expect ';' after loop condition."),
+            line,
+        })?;
+        let increment = if !self.check(&RIGHT_PAREN) {
+            Some(self.expression()?)
+        } else { None };
+
+        self.consume(&RIGHT_PAREN, |line| ExpectError {
+            msg: String::from("Expect ')' after for clauses."),
+            line,
+        })?;
+        let mut body = self.statement()?;
+
+        if let Some(increment) = increment {
+            body = Stmt::Block(vec![body, Stmt::ExprStmt(increment)]);
+        }
+        body = Stmt::WhileStmt(condition.unwrap_or(Expr::Literal(Token {
+            token_type: TRUE,
+            pos: Default::default(),
+        })), Box::new(body));
+
+        if let Some(initializer) = initializer {
+            body = Stmt::Block(vec![initializer, body]);
+        }
+
+        Ok(body)
+    }
+
     fn while_statement(&mut self) -> StmtResult {
-        let line = self.previous().pos.line;
-        self.consume(&LEFT_PAREN, || ExpectIfParen { line })?;
+        self.consume(&LEFT_PAREN, |line| ExpectWhileParen { line })?;
         let condition = self.expression()?;
-        self.consume(&RIGHT_PAREN, || ExpectIfParen { line })?;
+        self.consume(&RIGHT_PAREN, |line| ExpectWhileParen { line })?;
         let body = self.statement()?;
 
         Ok(Stmt::WhileStmt(condition, Box::new(body)))
     }
 
     fn if_statement(&mut self) -> StmtResult {
-        let line = self.previous().pos.line;
-        self.consume(&LEFT_PAREN, || ExpectIfParen { line })?;
+        self.consume(&LEFT_PAREN, |line| ExpectIfParen { line })?;
         let condition = self.expression()?;
-        self.consume(&RIGHT_PAREN, || ExpectIfParen { line })?;
+        self.consume(&RIGHT_PAREN, |line| ExpectIfParen { line })?;
         let then_branch = self.statement()?;
         let mut else_branch: Option<Box<Stmt>> = None;
         if self.matches(vec![ELSE]) {
@@ -176,28 +277,31 @@ impl Parser {
         Ok(Stmt::IfStmt(condition, Box::new(then_branch), else_branch))
     }
 
-    fn block(&mut self) -> StmtResult {
+    fn block_stmt(&mut self) -> StmtResult {
+        let stmts = self.block()?;
+        Ok(Stmt::Block(stmts))
+    }
+
+    fn block(&mut self) -> Result<Vec<Stmt>, ParserError> {
         let mut stmts = vec![];
         while !self.check(&RIGHT_BRACE) && !self.is_at_end() {
             let stmt = self.declaration()?;
             stmts.push(stmt);
         }
-        let line = self.previous().pos.line;
-        self.consume(&RIGHT_BRACE, || ExpectRightBrace { line })?;
-        Ok(Stmt::Block(stmts))
+        self.consume(&RIGHT_BRACE, |line| ExpectRightBrace { line })?;
+        Ok(stmts)
     }
+
 
     fn print_stmt(&mut self) -> StmtResult {
         let expr = self.expression()?;
-        let line = self.previous().pos.line;
-        self.consume(&SEMICOLON, || ExpectSemi { line })?;
+        self.consume(&SEMICOLON, |line| ExpectSemi { line })?;
         Ok(Stmt::PrintStmt(expr))
     }
 
     fn expr_stmt(&mut self) -> StmtResult {
         let expr = self.expression()?;
-        let line = self.previous().pos.line;
-        self.consume(&SEMICOLON, || ExpectSemi { line })?;
+        self.consume(&SEMICOLON, |line| ExpectSemi { line })?;
         Ok(Stmt::ExprStmt(expr))
     }
 
@@ -222,7 +326,7 @@ impl Parser {
                 _ => {
                     Err(ParserError::InvalidAssign { line })
                 }
-            }
+            };
         }
         Ok(expr)
     }
@@ -325,12 +429,45 @@ impl Parser {
             return Result::Ok(Expr::Unary(op, Box::new(right)));
         }
 
-        self.primary()
+        self.call()
+    }
+
+    fn call(&mut self) -> Result<Expr, ParserError> {
+        let mut expr = self.primary()?;
+        loop {
+            if self.matches(vec![LEFT_PAREN]) {
+                expr = self.finish_call(expr)?;
+            } else {
+                break;
+            }
+        }
+        Ok(expr)
+    }
+
+    fn finish_call(&mut self, callee: Expr) -> Result<Expr, ParserError> {
+        let mut arguments = vec![];
+
+        if !self.check(&RIGHT_PAREN) {
+            loop {
+                arguments.push(self.expression()?);
+                if arguments.len() > 255 {
+                    return Err(ArgumentsExceedError { line: self.peek().pos.line });
+                }
+                if !self.matches(vec![COMMA]) {
+                    break;
+                }
+            }
+        }
+        let paren = self.consume(&RIGHT_PAREN,
+                                 |line| ExpectError {
+                                     msg: "Expect ')' after arguments.".to_string(),
+                                     line,
+                                 })?;
+        Ok(Expr::Call(Box::new(callee), paren.clone(), Box::new(arguments)))
     }
 
     fn primary(&mut self) -> Result<Expr, ParserError> {
         let t = self.peek();
-        let line = t.pos.line;
 
         match t.token_type {
             NUMBER(_) | STRING(_) | TRUE | FALSE | NIL => {
@@ -342,7 +479,7 @@ impl Parser {
                 self.advance();
                 let expr = self.expression()?;
                 self.consume(&RIGHT_PAREN,
-                             || ParserError::ExpectRightParen { line })?;
+                             |line| ParserError::ExpectRightParen { line })?;
                 Ok(Expr::Grouping(Box::new(expr)))
             }
             IDENTIFIER(_) => {
@@ -350,19 +487,42 @@ impl Parser {
                 self.advance();
                 Ok(Expr::Variable(token))
             }
-            _ => Err(ParserError::ExpectExpr { line }),
+            _ => {
+                let line = self.peek().pos.line;
+                Err(ParserError::ExpectExpr { line })
+            }
         }
     }
     fn consume<F>(&mut self, token_type: &TokenType, on_err: F) -> Result<&Token, ParserError>
         where
-            F: FnOnce() -> ParserError,
+            F: FnOnce(usize) -> ParserError,
     {
         if self.check(token_type) {
             self.advance();
             Ok(self.previous())
         } else {
-            Err(on_err())
+            let line = self.peek().pos.line;
+            Err(on_err(line))
         }
+    }
+    fn expect_id(&mut self, msg: String) -> Result<&Token, ParserError> {
+        let t = self.peek();
+        if let IDENTIFIER(_name) = &t.token_type {
+            self.advance();
+            Ok(self.previous())
+        } else {
+            Err(ExpectError {
+                msg,
+                line:t.pos.line
+            })
+        }
+    }
+
+    fn expect(&mut self, token_type: &TokenType, msg: String) -> Result<&Token, ParserError> {
+        self.consume(token_type, |line| ExpectError {
+            msg,
+            line
+        })
     }
 }
 

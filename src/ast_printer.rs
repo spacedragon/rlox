@@ -57,6 +57,14 @@ impl Visitor<String> for AstPrinter {
         }
         panic!("not a assign expr")
     }
+
+    fn visit_call(&mut self, expr: &Expr) -> String {
+        if let Expr::Call(callee, ..) = expr {
+            return format!("(call {:?})", callee)
+        }
+        panic!("not a call expr")
+
+    }
 }
 
 impl AstPrinter {
