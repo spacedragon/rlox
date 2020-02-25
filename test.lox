@@ -1,0 +1,17 @@
+class Food {
+    name() {
+       return "food";
+    }
+}
+class Cake < Food {
+  taste() {
+    print super.name();
+    var adjective = "delicious";
+    print "The " + this.flavor + " cake is " + adjective + "!";
+  }
+}
+
+
+var cake = Cake();
+cake.flavor = "German chocolate";
+cake.taste();

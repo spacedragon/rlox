@@ -9,7 +9,8 @@ use crate::interpreter::Interpreter;
 use crate::string_writer::StringWriter;
 use std::io::{Stdout, Write};
 use crate::error::LoxError;
-
+use std::fs;
+use crate::resolver::Resolver;
 
 mod scanner;
 mod parser;
@@ -57,16 +58,23 @@ fn main() -> Result<(), LoxError>{
         Command::Compile{ .. }  => {
 
         }
-        Command::Run{ .. }  => {
-            let source = "print  \"one\";\n print true; print 2+1;";
-            let scanner = Scanner::new(source);
-            let tokens = scanner.scan_tokens()?;
-            let parser = Parser::new(tokens);
-            let stmts = parser.parse()?;
-            let output = std::io::stdout();
-            let mut interpreter = Interpreter::new(output);
+        Command::Run{ files }  => {
+            if files.is_empty() {
+                panic!("no input file.");
+            }
+            for file in files {
+                let source = fs::read_to_string(file)?;
+                let scanner = Scanner::new(&source);
+                let tokens = scanner.scan_tokens()?;
+                let parser = Parser::new(tokens);
+                let mut stmts = parser.parse()?;
+                let mut resolver = Resolver::new();
+                resolver.resolve(&mut stmts);
+                let output = std::io::stdout();
+                let mut interpreter = Interpreter::new(output);
 
-            interpreter.interpret(&stmts)?;
+                interpreter.interpret(&stmts)?;
+            }
         }
     }
     Ok(())

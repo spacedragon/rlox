@@ -16,6 +16,9 @@ quick_error!{
         ResolverError(err: ResolverError) {
             from()
         }
+        IoError(err: std::io::Error) {
+            from()
+        }
     }
 }
 
