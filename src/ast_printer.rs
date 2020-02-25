@@ -188,7 +188,7 @@ impl AstPrinter {
         expr.accept(self)
     }
 
-    pub fn print_stmts(&mut self, stmts: &Vec<Stmt>) -> &str {
+    pub fn print_stmts(&mut self, stmts: &[Stmt]) -> &str {
         for stmt in stmts {
             stmt.accept(self).expect("error!");
         }

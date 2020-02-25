@@ -59,7 +59,7 @@ pub trait StmtVisitorMut {
 pub enum Expr {
     Assign(Token, Box<Expr>, i32),
     Binary(Box<Expr>, Token, Box<Expr>),
-    Call(Box<Expr>, Token, Box<Vec<Expr>>),
+    Call(Box<Expr>, Token, Vec<Expr>),
     Get(Box<Expr>, Token),
     Literal(Token),
     Logical(Box<Expr>, Token, Box<Expr>),
@@ -71,8 +71,6 @@ pub enum Expr {
 }
 
 
-
-
 impl Expr {
     pub fn accept<R>(&self, visitor: &mut dyn Visitor<R>) -> R {
         match self {
@@ -80,13 +78,13 @@ impl Expr {
             Expr::Literal(_) => visitor.visit_literal(self),
             Expr::Grouping(_) => visitor.visit_grouping(self),
             Expr::Unary(_, _) => visitor.visit_unary(self),
-            Expr::Variable(_,_) => visitor.visit_var_expr(self),
+            Expr::Variable(_, _) => visitor.visit_var_expr(self),
             Expr::Assign(_, _, _) => visitor.visit_assign(self),
             Expr::Logical(_, _, _) => visitor.visit_logical(self),
             Expr::Call(_, _, _) => visitor.visit_call(self),
-            Expr::Get(_, _) => {visitor.visit_get(self)}
-            Expr::Set(_, _, _) => {visitor.visit_set(self)}
-            Expr::This(_, _) => {visitor.visit_this(self)}
+            Expr::Get(_, _) => { visitor.visit_get(self) }
+            Expr::Set(_, _, _) => { visitor.visit_set(self) }
+            Expr::This(_, _) => { visitor.visit_this(self) }
         }
     }
 
@@ -96,13 +94,13 @@ impl Expr {
             Expr::Literal(_) => visitor.visit_literal(self),
             Expr::Grouping(_) => visitor.visit_grouping(self),
             Expr::Unary(_, _) => visitor.visit_unary(self),
-            Expr::Variable(_,_) => visitor.visit_var_expr(self),
+            Expr::Variable(_, _) => visitor.visit_var_expr(self),
             Expr::Assign(_, _, _) => visitor.visit_assign(self),
             Expr::Logical(_, _, _) => visitor.visit_logical(self),
             Expr::Call(_, _, _) => visitor.visit_call(self),
-            Expr::Get(_, _) => {visitor.visit_get(self)},
-            Expr::Set(_, _, _) => {visitor.visit_set(self)},
-            Expr::This(_, _) => {visitor.visit_this(self)}
+            Expr::Get(_, _) => { visitor.visit_get(self) }
+            Expr::Set(_, _, _) => { visitor.visit_set(self) }
+            Expr::This(_, _) => { visitor.visit_this(self) }
         }
     }
 }
@@ -146,12 +144,9 @@ impl Stmt {
             Stmt::Function(_, _, _) => { visitor.visit_func_stmt(self) }
             Stmt::ReturnStmt(_, _) => { visitor.visit_ret_stmt(self) }
             Stmt::Class(_, _) => { visitor.visit_class_stmt(self) }
-
         }
     }
 }
-
-
 
 
 use crate::error::ParserError::*;
@@ -238,7 +233,7 @@ impl Parser {
             } else {
                 Expr::Literal(Token::new(NIL, name.pos.clone()))
             };
-            self.consume(&SEMICOLON, |line| ExpectSemi(line))?;
+            self.consume(&SEMICOLON,  ExpectSemi)?;
             return Ok(Stmt::VarStmt(name, initializer));
         }
         Err(ExpectVarName(token.pos.line))
@@ -279,7 +274,7 @@ impl Parser {
     }
 
     fn for_statement(&mut self) -> StmtResult {
-        self.consume(&LEFT_PAREN, |line| ExpectForParen(line))?;
+        self.consume(&LEFT_PAREN, ExpectForParen)?;
         let initializer = match self.peek().token_type {
             SEMICOLON => {
                 self.advance();
@@ -313,10 +308,11 @@ impl Parser {
         if let Some(increment) = increment {
             body = Stmt::Block(vec![body, Stmt::ExprStmt(increment)]);
         }
-        body = Stmt::WhileStmt(condition.unwrap_or(Expr::Literal(Token {
+        body = Stmt::WhileStmt(condition.unwrap_or_else(|| Expr::Literal(Token {
             token_type: TRUE,
             pos: Default::default(),
         })), Box::new(body));
+
 
         if let Some(initializer) = initializer {
             body = Stmt::Block(vec![initializer, body]);
@@ -326,23 +322,25 @@ impl Parser {
     }
 
     fn while_statement(&mut self) -> StmtResult {
-        self.consume(&LEFT_PAREN, |line| ExpectWhileParen(line))?;
+        self.consume(&LEFT_PAREN, ExpectWhileParen)?;
         let condition = self.expression()?;
-        self.consume(&RIGHT_PAREN, |line| ExpectWhileParen(line))?;
+        self.consume(&RIGHT_PAREN, ExpectWhileParen)?;
         let body = self.statement()?;
 
         Ok(Stmt::WhileStmt(condition, Box::new(body)))
     }
 
     fn if_statement(&mut self) -> StmtResult {
-        self.consume(&LEFT_PAREN, |line| ExpectIfParen(line))?;
+        self.consume(&LEFT_PAREN, ExpectIfParen)?;
         let condition = self.expression()?;
-        self.consume(&RIGHT_PAREN, |line| ExpectIfParen(line))?;
+        self.consume(&RIGHT_PAREN, ExpectIfParen)?;
         let then_branch = self.statement()?;
-        let mut else_branch: Option<Box<Stmt>> = None;
-        if self.matches(vec![ELSE]) {
-            else_branch = Some(Box::new(self.statement()?));
-        }
+        let else_branch = if self.matches(vec![ELSE]) {
+            Some(Box::new(self.statement()?))
+        } else {
+            None
+        };
+
         Ok(Stmt::IfStmt(condition, Box::new(then_branch), else_branch))
     }
 
@@ -357,20 +355,20 @@ impl Parser {
             let stmt = self.declaration()?;
             stmts.push(stmt);
         }
-        self.consume(&RIGHT_BRACE, |line| ExpectRightBrace(line))?;
+        self.consume(&RIGHT_BRACE, ExpectRightBrace)?;
         Ok(stmts)
     }
 
 
     fn print_stmt(&mut self) -> StmtResult {
         let expr = self.expression()?;
-        self.consume(&SEMICOLON, |line| ExpectSemi(line))?;
+        self.consume(&SEMICOLON, ExpectSemi)?;
         Ok(Stmt::PrintStmt(expr))
     }
 
     fn expr_stmt(&mut self) -> StmtResult {
         let expr = self.expression()?;
-        self.consume(&SEMICOLON, |line| ExpectSemi(line))?;
+        self.consume(&SEMICOLON, ExpectSemi)?;
         Ok(Stmt::ExprStmt(expr))
     }
 
@@ -389,7 +387,7 @@ impl Parser {
             let line = equals.pos.line;
             let value = self.assignment()?;
             return match expr {
-                Expr::Variable(t,_) => {
+                Expr::Variable(t, _) => {
                     Ok(Expr::Assign(t, Box::new(value), -1))
                 }
                 Expr::Get(obj, name) => {
@@ -539,7 +537,7 @@ impl Parser {
                                      msg: "Expect ')' after arguments.".to_string(),
                                      line,
                                  })?;
-        Ok(Expr::Call(Box::new(callee), paren.clone(), Box::new(arguments)))
+        Ok(Expr::Call(Box::new(callee), paren.clone(), arguments))
     }
 
     fn primary(&mut self) -> Result<Expr, ParserError> {
@@ -554,8 +552,7 @@ impl Parser {
             LEFT_PAREN => {
                 self.advance();
                 let expr = self.expression()?;
-                self.consume(&RIGHT_PAREN,
-                             |line| ParserError::ExpectRightParen(line))?;
+                self.consume(&RIGHT_PAREN, ParserError::ExpectRightParen)?;
                 Ok(Expr::Grouping(Box::new(expr)))
             }
             IDENTIFIER(_) => {
@@ -594,7 +591,7 @@ impl Parser {
         } else {
             Err(ExpectError {
                 msg,
-                line:t.pos.line
+                line: t.pos.line,
             })
         }
     }
@@ -602,7 +599,7 @@ impl Parser {
     fn expect(&mut self, token_type: &TokenType, msg: String) -> Result<&Token, ParserError> {
         self.consume(token_type, |line| ExpectError {
             msg,
-            line
+            line,
         })
     }
 }

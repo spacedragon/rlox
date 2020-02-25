@@ -43,13 +43,10 @@ impl Fun {
     }
 
     pub fn bind(&mut self, inst: Rc<RefCell<LoxInstance>>) {
-        match self {
-            Fun::UserFunc(_,_,_,env) => {
-                let mut new_env = Environment::new(env.clone());
-                new_env.define("this".to_string(), Value::INSTANCE(inst));
-                *env = Rc::new(RefCell::new(new_env));
-            }
-            _ => {}
+        if let Fun::UserFunc(_, _, _, env) = self {
+            let mut new_env = Environment::new(env.clone());
+            new_env.define("this".to_string(), Value::INSTANCE(inst));
+            *env = Rc::new(RefCell::new(new_env));
         }
     }
 }

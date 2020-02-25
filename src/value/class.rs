@@ -4,6 +4,7 @@ use crate::error::RuntimeError;
 use crate::error::RuntimeError::UndefinedProperty;
 use std::rc::Rc;
 use std::cell::RefCell;
+use std::fmt::{Display, Formatter};
 
 #[derive(Clone, PartialEq, Debug)]
 pub struct LoxClass {
@@ -11,6 +12,11 @@ pub struct LoxClass {
     methods: HashMap<String, Value>
 }
 
+impl Display for LoxClass {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} class", self.name)
+    }
+}
 
 impl LoxClass {
     pub fn new(name: String, methods: HashMap<String, Value>) -> Self {
@@ -26,10 +32,6 @@ impl LoxClass {
         } else {
             0
         }
-    }
-
-    pub fn to_string(&self) -> String {
-        format!("{} class", self.name)
     }
 
     pub fn find_method(&self, name: &str) -> Option<&Fun> {
@@ -78,7 +80,10 @@ impl LoxInstance {
         self.fields.insert(name.to_string(), value.clone());
     }
 
-    pub fn to_string(&self) -> String {
-        format!("{} instance", self.class.borrow().name)
+}
+
+impl Display for LoxInstance {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} instance", self.class.borrow().name)
     }
 }

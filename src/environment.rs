@@ -50,11 +50,11 @@ impl Environment {
             return enclosing.borrow().get(name);
         }
 
-        return Err(UndefinedVar { 0: name.to_string() });
+        Err(UndefinedVar { 0: name.to_string() })
     }
 
     pub fn get_at(&self, t: &str, depth: u32) -> Result<Value, RuntimeError> {
-        return if depth == 0 {
+        if depth == 0 {
             self.get(t)
         } else {
             self.ancestor(depth).borrow().get(t)
@@ -79,7 +79,7 @@ impl Environment {
     }
 
     pub fn assign_at(&mut self, name: &str, value: &Value, depth: u32) -> Result<(), RuntimeError> {
-        return if depth == 0 {
+        if depth == 0 {
             self.assign(name, value)
         } else {
             self.ancestor(depth).borrow_mut().assign(name, value)
@@ -95,6 +95,6 @@ impl Environment {
             return enclosing.borrow_mut().assign(name, value);
         }
 
-        return Err(UndefinedVar(name.to_string()));
+        Err(UndefinedVar(name.to_string()))
     }
 }

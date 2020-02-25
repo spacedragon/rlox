@@ -46,7 +46,7 @@ impl<W: StringWriter> Interpreter<W> {
     }
 
 
-    fn execute_stmts(&mut self, stmts: &Vec<Stmt>, env: Rc<RefCell<Environment>>) -> Result<(), RuntimeError> {
+    fn execute_stmts(&mut self, stmts: &[Stmt], env: Rc<RefCell<Environment>>) -> Result<(), RuntimeError> {
         let prev = self.env.clone();
         self.env = env;
         for stmt in stmts {
@@ -61,7 +61,7 @@ impl<W: StringWriter> Interpreter<W> {
     }
 
     fn call_fun(&mut self, f: &Fun, args: Vec<Value>, is_init: bool) -> ValueResult {
-        return match f {
+        match f {
             Fun::Native(_, _, f) => {
                 Ok(f(args))
             }
@@ -91,7 +91,7 @@ impl<W: StringWriter> Interpreter<W> {
             _ => {
                 panic!("not a function, {:?}", f)
             }
-        };
+        }
     }
 
     fn execute_function(&mut self, callee: Value, args: Vec<Value>) -> ValueResult {
@@ -112,8 +112,7 @@ impl<W: StringWriter> Interpreter<W> {
                 let instance = Rc::new(RefCell::new(LoxInstance::new(class.clone())));
                 let mut bclass = class.borrow_mut();
                 let init = bclass.find_method_mut("init");
-                if init.is_some() {
-                    let init = init.unwrap();
+                if let Some(init) = init {
                     init.bind(instance.clone());
                     self.call_fun(init, args, true)?;
                 }
@@ -125,11 +124,11 @@ impl<W: StringWriter> Interpreter<W> {
     }
 
     fn lookup_var(&self, name: &str, depth: i32) -> Result<Value, RuntimeError> {
-        return if depth >= 0 {
+        if depth >= 0 {
             self.env.borrow().get_at(name, depth as u32)
         } else {
             self.globals.borrow().get(name)
-        };
+        }
     }
 }
 
