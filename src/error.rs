@@ -84,6 +84,9 @@ quick_error! {
         ReturnTopLevel {
             display( "Cannot return from top-level code.")
         }
+        ReturnInInit {
+            display( "Cannot return a value from an initializer.")
+        }
         UseThisOutOfClass {
             display( "Cannot use 'this' outside of a class.")
         }

@@ -60,43 +60,65 @@ impl<W: StringWriter> Interpreter<W> {
         Ok(())
     }
 
+    fn call_fun(&mut self, f: &Fun, args: Vec<Value>, is_init: bool) -> ValueResult {
+        return match f {
+            Fun::Native(_, _, f) => {
+                Ok(f(args))
+            }
+            Fun::UserFunc(_, _, Stmt::Function(_, params, body), env) => {
+                let mut env = Environment::new(env.clone());
+                for i in 0..params.len() {
+                    if let Token { token_type: IDENTIFIER(name), .. } = &params[i] {
+                        env.define(name.clone(), args[i].clone());
+                    }
+                }
+                let ret = if is_init {
+                    env.get_at("this", 0)?
+                } else {
+                    Value::NIL
+                };
+                let p_env = Rc::new(RefCell::new(env));
+
+                if let Err(ReturnValue(v)) = self.execute_stmts(&body, p_env) {
+                    if is_init {
+                        return Ok(ret);
+                    }
+                    return Ok(v);
+                }
+
+                Ok(ret)
+            }
+            _ => {
+                panic!("not a function, {:?}", f)
+            }
+        };
+    }
+
     fn execute_function(&mut self, callee: Value, args: Vec<Value>) -> ValueResult {
         if let Value::FUN(f) = callee {
             let actual = args.len() as i8;
             return if actual != f.arity() {
                 Err(ArgumentsSizeNotMatch(f.arity(), actual))
             } else {
-                return match f {
-                    Fun::Native(_, _, f) => {
-                        Ok(f(args))
-                    }
-                    Fun::UserFunc(_, _, Stmt::Function(_, params, body), env) => {
-                        let mut env = Environment::new(env);
-                        for i in 0..params.len() {
-                            if let Token { token_type: IDENTIFIER(name), .. } = &params[i] {
-                                env.define(name.clone(), args[i].clone());
-                            }
-                        }
-                        if let Err(ReturnValue(v)) = self.execute_stmts(&body,
-                                                                        Rc::new(RefCell::new(env))) {
-                            return Ok(v);
-                        }
-
-                        Ok(Value::NIL)
-                    }
-                    _ => {
-                        panic!("not a function, {:?}", f)
-                    }
-                };
+                return self.call_fun(&f, args, false);
             };
         }
         if let Value::CLASS(class) = callee {
             let actual = args.len() as i8;
-            return if actual != class.arity() {
-                Err(ArgumentsSizeNotMatch(class.arity(), actual))
+            return if actual != class.borrow().arity() {
+                Err(ArgumentsSizeNotMatch(class.borrow().arity(), actual))
             } else {
-                let instance = LoxInstance::new(class);
-                Ok(Value::INSTANCE(Rc::new(RefCell::new(instance))))
+
+                let instance = Rc::new(RefCell::new(LoxInstance::new(class.clone())));
+                let mut bclass = class.borrow_mut();
+                let init = bclass.find_method_mut("init");
+                if init.is_some() {
+                    let init = init.unwrap();
+                    init.bind(instance.clone());
+                    self.call_fun(init, args, true)?;
+                }
+
+                return Ok(Value::INSTANCE(instance))
             };
         }
         unreachable!()
@@ -206,7 +228,7 @@ impl<W: StringWriter> StmtVisitor for Interpreter<W> {
             }
 
             let class = LoxClass::new(name.to_string(), methods);
-            env.assign(name, &Value::CLASS(class))?;
+            env.assign(name, &Value::CLASS(Rc::new(RefCell::new(class))))?;
             return Ok(());
         }
         unreachable!()
