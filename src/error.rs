@@ -13,6 +13,9 @@ quick_error!{
         ScannerError(err: ScannerError) {
             from()
         }
+        ResolverError(err: ResolverError) {
+            from()
+        }
     }
 }
 
@@ -67,12 +70,25 @@ quick_error!{
         ArgumentsExceedError ( line: usize ){
             display ("Cannot have more than 255 arguments.(line {})", line)
         }
+    }
+}
+quick_error! {
+    #[derive(Debug)]
+    pub enum ResolverError {
         ReadLocalInInit {
             display ("Cannot read local variable in its own initializer.")
         }
+        VariableAlreadyDeclared {
+            display ("Variable with this name already declared in this scope.")
+        }
+        ReturnTopLevel {
+            display( "Cannot return from top-level code.")
+        }
+        UseThisOutOfClass {
+            display( "Cannot use 'this' outside of a class.")
+        }
     }
 }
-
 quick_error! {
     #[derive(Debug)]
     pub enum RuntimeError {
@@ -91,6 +107,9 @@ quick_error! {
         UndefinedVar(name: String) {
             display("Undefined variable {}.", name)
         }
+        UndefinedProperty(name: String) {
+            display("Undefined property {}.", name)
+        }
         ExpectIdentifier {
             display("Expected a identifier here")
         }
@@ -99,6 +118,9 @@ quick_error! {
         }
         ArgumentsSizeNotMatch(expect: i8, actual: i8) {
             display("Expected {} arguments but got {}.", expect, actual)
+        }
+        NoProperties(line: usize) {
+            display("Only instances have properties.({})", line)
         }
         ReturnValue(value: Value) {}
     }

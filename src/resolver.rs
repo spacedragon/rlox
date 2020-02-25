@@ -5,18 +5,35 @@ use crate::scanner::TokenType::*;
 
 
 
-use crate::error::ParserError;
-use ParserError::*;
+use crate::error::ResolverError;
+use crate::error::ResolverError::*;
+use std::mem;
 
+
+enum FunctionType {
+    None,
+    Function,
+    Method,
+    Initializer
+}
+
+enum ClassType {
+    None,
+    Class
+}
 
 pub struct Resolver {
     scopes: LinkedList<HashMap<String, bool>>,
+    current_function: FunctionType,
+    current_class: ClassType
 }
 
 impl Resolver {
     pub fn new() -> Self {
         Self {
             scopes: LinkedList::new(),
+            current_function: FunctionType::None,
+            current_class: ClassType::None
         }
     }
 
@@ -38,10 +55,15 @@ impl Resolver {
         }
     }
 
-    fn declare(&mut self, name: String) {
+    fn declare(&mut self, name: String) -> Result<(), ResolverError>{
         if let Some(scope) = self.scopes.front_mut() {
-            scope.insert(name, false);
+            if scope.contains_key(&name) {
+                return Err(VariableAlreadyDeclared)
+            } else {
+                scope.insert(name, false);
+            }
         }
+        Ok(())
     }
 
     fn define(&mut self, name: String) {
@@ -65,12 +87,30 @@ impl Resolver {
         return -1
     }
 
+    fn resolve_function(&mut self,stmt: &mut Stmt, fun_type: FunctionType) -> Result<(), ResolverError>{
+        if let Stmt::Function(_, params, body) = stmt {
+            let prev = std::mem::replace(&mut self.current_function, fun_type);
+
+            self.begin_scope();
+            for p in params {
+                if let Token{ token_type: IDENTIFIER(param), ..} = p {
+                    self.declare(param.to_string())?;
+                    self.define(param.to_string());
+                }
+            }
+            self.resolve(body);
+            self.end_scope();
+            std::mem::replace(&mut self.current_function, prev);
+        }
+        return Ok(())
+    }
+
 }
 
 
 
-impl VisitorMut<Result<(), ParserError>> for Resolver {
-    fn visit_binary(&mut self, expr: &mut Expr) -> Result<(), ParserError> {
+impl VisitorMut<Result<(), ResolverError>> for Resolver {
+    fn visit_binary(&mut self, expr: &mut Expr) -> Result<(), ResolverError> {
         if let Expr::Binary(lhs, _, rhs) = expr {
             self.resolve_expr(lhs);
             self.resolve_expr(rhs);
@@ -78,25 +118,25 @@ impl VisitorMut<Result<(), ParserError>> for Resolver {
         Ok(())
     }
 
-    fn visit_grouping(&mut self, expr: &mut Expr) -> Result<(), ParserError> {
+    fn visit_grouping(&mut self, expr: &mut Expr) -> Result<(), ResolverError> {
         if let Expr::Grouping(e) = expr {
             self.resolve_expr(e);
         }
         Ok(())
     }
 
-    fn visit_unary(&mut self, expr: &mut Expr) -> Result<(), ParserError> {
+    fn visit_unary(&mut self, expr: &mut Expr) -> Result<(), ResolverError> {
         if let Expr::Unary(_, rhs) = expr {
             self.resolve_expr(rhs);
         }
         Ok(())
     }
 
-    fn visit_literal(&mut self, _expr: &mut Expr) -> Result<(), ParserError> {
+    fn visit_literal(&mut self, _expr: &mut Expr) -> Result<(), ResolverError> {
         Ok(())
     }
 
-    fn visit_var_expr(&mut self, expr: &mut Expr) -> Result<(), ParserError> {
+    fn visit_var_expr(&mut self, expr: &mut Expr) -> Result<(), ResolverError> {
         if let Expr::Variable(Token { token_type: IDENTIFIER(name), ..}, depth) = expr {
             if let Some(scope) = self.scopes.front() {
                 if let Some(false) = scope.get(name) {
@@ -108,7 +148,7 @@ impl VisitorMut<Result<(), ParserError>> for Resolver {
         return Ok(());
     }
 
-    fn visit_assign(&mut self, expr: &mut Expr) -> Result<(), ParserError> {
+    fn visit_assign(&mut self, expr: &mut Expr) -> Result<(), ResolverError> {
         if let Expr::Assign(Token { token_type: IDENTIFIER(name), ..}, value,depth) = expr {
             self.resolve_expr(value);
             *depth = self.resolve_local(name);
@@ -116,7 +156,7 @@ impl VisitorMut<Result<(), ParserError>> for Resolver {
         return Ok(());
     }
 
-    fn visit_logical(&mut self, expr: &mut Expr) -> Result<(), ParserError> {
+    fn visit_logical(&mut self, expr: &mut Expr) -> Result<(), ResolverError> {
         if let Expr::Logical(l,_ , r) = expr {
             self.resolve_expr(l);
             self.resolve_expr(r);
@@ -124,7 +164,7 @@ impl VisitorMut<Result<(), ParserError>> for Resolver {
         Ok(())
     }
 
-    fn visit_call(&mut self, expr: &mut Expr) -> Result<(), ParserError> {
+    fn visit_call(&mut self, expr: &mut Expr) -> Result<(), ResolverError> {
         if let Expr::Call(callee, _, args) = expr {
             self.resolve_expr(callee);
             for arg in args.iter_mut() {
@@ -133,10 +173,35 @@ impl VisitorMut<Result<(), ParserError>> for Resolver {
         }
         Ok(())
     }
+
+    fn visit_get(&mut self, expr: &mut Expr) -> Result<(), ResolverError> {
+        if let Expr::Get(expr, _) = expr {
+            self.resolve_expr(expr);
+        }
+        Ok(())
+    }
+
+    fn visit_set(&mut self, expr: &mut Expr) -> Result<(), ResolverError> {
+        if let Expr::Set(expr, _, value) = expr {
+            self.resolve_expr(expr);
+            self.resolve_expr(value);
+        }
+        Ok(())
+    }
+
+    fn visit_this(&mut self, expr: &mut Expr) -> Result<(), ResolverError> {
+        if let ClassType::None = self.current_class {
+            return Err(UseThisOutOfClass);
+        }
+        if let Expr::This(Token{ token_type: THIS, ..}, depth) = expr {
+            *depth = self.resolve_local("this");
+        }
+        Ok(())
+    }
 }
 
 impl StmtVisitorMut for Resolver {
-    type Err =  ParserError;
+    type Err =  ResolverError;
 
     fn visit_expr_stmt(&mut self, stmt: &mut Stmt) -> Result<(), Self::Err> {
         if let Stmt::ExprStmt(expr) = stmt {
@@ -155,7 +220,7 @@ impl StmtVisitorMut for Resolver {
 
     fn visit_var_stmt(&mut self, stmt: &mut Stmt) -> Result<(), Self::Err> {
         if let Stmt::VarStmt(Token{ token_type: IDENTIFIER(name), ..}, init) = stmt {
-            self.declare(name.to_string());
+            self.declare(name.to_string())?;
             self.resolve_expr(init);
             self.define(name.to_string());
             return Ok(())
@@ -194,26 +259,38 @@ impl StmtVisitorMut for Resolver {
     }
 
     fn visit_func_stmt(&mut self, stmt: &mut Stmt) -> Result<(), Self::Err> {
-        if let Stmt::Function(Token{ token_type: IDENTIFIER(name), ..}, params, body) = stmt {
-            self.declare(name.to_string());
+        if let Stmt::Function(Token{ token_type: IDENTIFIER(name), ..}, _, _) = stmt {
+            self.declare(name.to_string())?;
             self.define(name.to_string());
-            self.begin_scope();
-            for p in params {
-                if let Token{ token_type: IDENTIFIER(param), ..} = p {
-                    self.declare(param.to_string());
-                    self.define(param.to_string());
-                }
-            }
-            self.resolve(body);
-            self.end_scope();
+            self.resolve_function(stmt, FunctionType::Function)?;
             return Ok(())
         }
         unreachable!()
     }
 
     fn visit_ret_stmt(&mut self, stmt: &mut Stmt) -> Result<(), Self::Err> {
+        if let FunctionType::None = self.current_function  {
+            return Err(ReturnTopLevel)
+        }
         if let Stmt::ReturnStmt(_ret, value) =  stmt {
             self.resolve_expr(value)
+        }
+        Ok(())
+    }
+
+    fn visit_class_stmt(&mut self, stmt: &mut Stmt) -> Result<(), Self::Err> {
+        if let Stmt::Class(Token{ token_type: IDENTIFIER(name), ..}, methods) = stmt {
+            let class_type = mem::replace(&mut self.current_class, ClassType::Class);
+            self.declare(name.to_string())?;
+            self.define(name.to_string());
+            self.begin_scope();
+            self.scopes.front_mut().unwrap().insert("this".to_string(), true);
+
+            for method in methods {
+                self.resolve_function(method, FunctionType::Method)?;
+            }
+            self.end_scope();
+            mem::replace(&mut self.current_class, class_type);
         }
         Ok(())
     }

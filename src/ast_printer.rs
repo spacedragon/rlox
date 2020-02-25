@@ -12,21 +12,21 @@ impl Visitor<String> for AstPrinter {
         if let Expr::Binary(ref lhs, ref op, ref rhs) = expr {
             return format!("({} {} {})", op, lhs.accept(self), rhs.accept(self))
         }
-        panic!("not a binary expr")
+        unreachable!()
     }
 
     fn visit_grouping(&mut self, expr: &Expr) -> String {
         if let Expr::Grouping(expr) = expr {
             return format!("(group {})", expr.accept(self))
         }
-        panic!("not a grouping expr")
+        unreachable!()
     }
 
     fn visit_unary(&mut self, expr: &Expr) -> String {
         if let Expr::Unary(ref op, ref rhs) = expr {
             return format!("({} {})", op, rhs.accept(self))
         }
-        panic!("not a unary expr")
+        unreachable!()
     }
 
     fn visit_literal(&mut self, expr: &Expr) -> String {
@@ -43,28 +43,49 @@ impl Visitor<String> for AstPrinter {
         if let Expr::Variable(Token{ token_type: IDENTIFIER(name), .. }, depth) = expr {
             return format!("(var {} {})", name, depth)
         }
-        panic!("not a var expr")
+        unreachable!()
     }
 
     fn visit_assign(&mut self, expr: &Expr) -> String {
         if let Expr::Assign(ref t, _, depth) = expr {
             return format!("(assign {} d{})", t, depth)
         }
-        panic!("not a assign expr")
+        unreachable!()
     }
 
     fn visit_logical(&mut self, expr: &Expr) -> String {
         if let Expr::Logical(_, ref t, _) = expr {
             return format!("(logical {})", t, )
         }
-        panic!("not a assign expr")
+        unreachable!()
     }
 
     fn visit_call(&mut self, expr: &Expr) -> String {
         if let Expr::Call(callee, ..) = expr {
             return format!("(call {:?})", callee)
         }
-        panic!("not a call expr")
+        unreachable!()
+    }
+
+    fn visit_get(&mut self, expr: &Expr) -> String {
+        if let Expr::Get(object, ..) = expr {
+            return format!("(get {:?})", object)
+        }
+        unreachable!()
+    }
+
+    fn visit_set(&mut self, expr: &Expr) -> String {
+        if let Expr::Set(object, _, value) = expr {
+            return format!("(set {:?} {:?})", object, value)
+        }
+        unreachable!()
+    }
+
+    fn visit_this(&mut self, expr: &Expr) -> String {
+        if let Expr::This(t,_) = expr {
+            return format!("(this {:?})", t)
+        }
+        unreachable!()
     }
 }
 
@@ -142,6 +163,16 @@ impl StmtVisitor for AstPrinter {
         if let Stmt::ReturnStmt(_t, expr) = stmt {
             let e = expr.accept(self);
             self.s.push_str(format!("<ret {}>\n", e).as_str());
+        }
+        Ok(())
+    }
+
+    fn visit_class_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err> {
+        if let Stmt::Class(Token { token_type: IDENTIFIER(name), ..}, stmts) = stmt {
+            for stmt in stmts {
+                stmt.accept(self)?;
+            }
+            self.s.push_str(format!("<class {}>\n", name).as_str());
         }
         Ok(())
     }

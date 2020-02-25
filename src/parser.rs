@@ -10,6 +10,9 @@ pub trait Visitor<R> {
     fn visit_assign(&mut self, expr: &Expr) -> R;
     fn visit_logical(&mut self, expr: &Expr) -> R;
     fn visit_call(&mut self, expr: &Expr) -> R;
+    fn visit_get(&mut self, expr: &Expr) -> R;
+    fn visit_set(&mut self, expr: &Expr) -> R;
+    fn visit_this(&mut self, expr: &Expr) -> R;
 }
 
 pub trait VisitorMut<R> {
@@ -21,6 +24,9 @@ pub trait VisitorMut<R> {
     fn visit_assign(&mut self, expr: &mut Expr) -> R;
     fn visit_logical(&mut self, expr: &mut Expr) -> R;
     fn visit_call(&mut self, expr: &mut Expr) -> R;
+    fn visit_get(&mut self, expr: &mut Expr) -> R;
+    fn visit_set(&mut self, expr: &mut Expr) -> R;
+    fn visit_this(&mut self, expr: &mut Expr) -> R;
 }
 
 pub trait StmtVisitor {
@@ -33,6 +39,7 @@ pub trait StmtVisitor {
     fn visit_while_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err>;
     fn visit_func_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err>;
     fn visit_ret_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err>;
+    fn visit_class_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err>;
 }
 
 pub trait StmtVisitorMut {
@@ -45,6 +52,7 @@ pub trait StmtVisitorMut {
     fn visit_while_stmt(&mut self, stmt: &mut Stmt) -> Result<(), Self::Err>;
     fn visit_func_stmt(&mut self, stmt: &mut Stmt) -> Result<(), Self::Err>;
     fn visit_ret_stmt(&mut self, stmt: &mut Stmt) -> Result<(), Self::Err>;
+    fn visit_class_stmt(&mut self, stmt: &mut Stmt) -> Result<(), Self::Err>;
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -52,8 +60,11 @@ pub enum Expr {
     Assign(Token, Box<Expr>, i32),
     Binary(Box<Expr>, Token, Box<Expr>),
     Call(Box<Expr>, Token, Box<Vec<Expr>>),
+    Get(Box<Expr>, Token),
     Literal(Token),
     Logical(Box<Expr>, Token, Box<Expr>),
+    Set(Box<Expr>, Token, Box<Expr>),
+    This(Token, i32),
     Grouping(Box<Expr>),
     Unary(Token, Box<Expr>),
     Variable(Token, i32),
@@ -73,6 +84,9 @@ impl Expr {
             Expr::Assign(_, _, _) => visitor.visit_assign(self),
             Expr::Logical(_, _, _) => visitor.visit_logical(self),
             Expr::Call(_, _, _) => visitor.visit_call(self),
+            Expr::Get(_, _) => {visitor.visit_get(self)}
+            Expr::Set(_, _, _) => {visitor.visit_set(self)}
+            Expr::This(_, _) => {visitor.visit_this(self)}
         }
     }
 
@@ -86,6 +100,9 @@ impl Expr {
             Expr::Assign(_, _, _) => visitor.visit_assign(self),
             Expr::Logical(_, _, _) => visitor.visit_logical(self),
             Expr::Call(_, _, _) => visitor.visit_call(self),
+            Expr::Get(_, _) => {visitor.visit_get(self)},
+            Expr::Set(_, _, _) => {visitor.visit_set(self)},
+            Expr::This(_, _) => {visitor.visit_this(self)}
         }
     }
 }
@@ -97,6 +114,7 @@ pub enum Stmt {
     ReturnStmt(Token, Expr),
     VarStmt(Token, Expr),
     Block(Vec<Stmt>),
+    Class(Token, Vec<Stmt>),
     IfStmt(Expr, Box<Stmt>, Option<Box<Stmt>>),
     WhileStmt(Expr, Box<Stmt>),
     Function(Token, Vec<Token>, Vec<Stmt>),
@@ -113,6 +131,7 @@ impl Stmt {
             Stmt::WhileStmt(_, _) => { visitor.visit_while_stmt(self) }
             Stmt::Function(_, _, _) => { visitor.visit_func_stmt(self) }
             Stmt::ReturnStmt(_, _) => { visitor.visit_ret_stmt(self) }
+            Stmt::Class(_, _) => { visitor.visit_class_stmt(self) }
         }
     }
 
@@ -126,6 +145,8 @@ impl Stmt {
             Stmt::WhileStmt(_, _) => { visitor.visit_while_stmt(self) }
             Stmt::Function(_, _, _) => { visitor.visit_func_stmt(self) }
             Stmt::ReturnStmt(_, _) => { visitor.visit_ret_stmt(self) }
+            Stmt::Class(_, _) => { visitor.visit_class_stmt(self) }
+
         }
     }
 }
@@ -163,7 +184,26 @@ impl Parser {
         if self.matches(vec![FUN]) {
             return self.function("function");
         }
+        if self.matches(vec![CLASS]) {
+            return self.class_declaration();
+        }
         self.statement()
+    }
+
+    fn class_declaration(&mut self) -> StmtResult {
+        let name = self.expect_id("Expect class name.".to_string())?.clone();
+        self.expect(&LEFT_BRACE, "Expect '{' before class body.".to_string())?;
+
+        let mut methods = vec![];
+
+        while !self.check(&RIGHT_BRACE) && !self.is_at_end() {
+            let method = self.function("method")?;
+            methods.push(method)
+        }
+
+        self.expect(&RIGHT_BRACE, "Expect '}' after class body.".to_string())?;
+
+        Ok(Stmt::Class(name, methods))
     }
 
     fn function(&mut self, kind: &'static str) -> StmtResult {
@@ -352,6 +392,9 @@ impl Parser {
                 Expr::Variable(t,_) => {
                     Ok(Expr::Assign(t, Box::new(value), -1))
                 }
+                Expr::Get(obj, name) => {
+                    Ok(Expr::Set(obj, name, Box::new(value)))
+                }
                 _ => {
                     Err(ParserError::InvalidAssign(line))
                 }
@@ -466,6 +509,10 @@ impl Parser {
         loop {
             if self.matches(vec![LEFT_PAREN]) {
                 expr = self.finish_call(expr)?;
+            } else if self.matches(vec![DOT]) {
+                let name =
+                    self.expect_id("Expect property name after '.'.".to_string())?;
+                expr = Expr::Get(Box::new(expr), name.clone());
             } else {
                 break;
             }
@@ -515,6 +562,11 @@ impl Parser {
                 let token = t.clone();
                 self.advance();
                 Ok(Expr::Variable(token, -1))
+            }
+            THIS => {
+                let token = t.clone();
+                self.advance();
+                Ok(Expr::This(token, -1))
             }
             _ => {
                 let line = self.peek().pos.line;

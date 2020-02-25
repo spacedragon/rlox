@@ -1,19 +1,23 @@
 pub mod callable;
-
+pub mod class;
 pub use self::callable::{Fun, Call};
+pub use self::class::LoxClass;
 
 use std::fmt;
 use crate::error::RuntimeError::*;
 use crate::error::RuntimeError;
 use std::rc::Rc;
+use crate::value::class::LoxInstance;
+use std::cell::RefCell;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Value {
     STRING(String),
     NUMBER(f64),
     BOOL(bool),
-    OBJECT,
     FUN(Fun),
+    CLASS(LoxClass),
+    INSTANCE(Rc<RefCell<LoxInstance>>),
     NIL,
 }
 
@@ -47,9 +51,10 @@ impl fmt::Display for Value {
             Value::STRING(s) => { write!(f, "{}", s.as_str()) }
             Value::NUMBER(v) => { write!(f, "{}", v) }
             Value::BOOL(b) => { write!(f, "{}", *b) }
-            Value::OBJECT => { write!(f, "(object)") }
+            Value::CLASS(_) => { write!(f, "(class)") }
             Value::FUN(_) => { write!(f, "(fn)") }
             Value::NIL => { write!(f, "nil") }
+            Value::INSTANCE(inst) => {write!(f, "{}", inst.borrow().to_string())}
         }
     }
 }

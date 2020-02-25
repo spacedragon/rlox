@@ -5,11 +5,13 @@ use crate::scanner::TokenType::*;
 use crate::scanner::Token;
 use crate::string_writer::StringWriter;
 use crate::environment::Environment;
-use crate::value::{Value, Fun};
+use crate::value::{Value, Fun, LoxClass};
 use std::rc::Rc;
 use std::cell::RefCell;
 use crate::error::RuntimeError;
 use RuntimeError::*;
+use std::collections::HashMap;
+use crate::value::class::LoxInstance;
 
 type ValueResult = Result<Value, RuntimeError>;
 
@@ -77,16 +79,35 @@ impl<W: StringWriter> Interpreter<W> {
                         }
                         if let Err(ReturnValue(v)) = self.execute_stmts(&body,
                                                                         Rc::new(RefCell::new(env))) {
-                            return Ok(v)
+                            return Ok(v);
                         }
 
                         Ok(Value::NIL)
                     }
-                    _ => { panic!("not a function") }
+                    _ => {
+                        panic!("not a function, {:?}", f)
+                    }
                 };
             };
         }
-        panic!("not a function")
+        if let Value::CLASS(class) = callee {
+            let actual = args.len() as i8;
+            return if actual != class.arity() {
+                Err(ArgumentsSizeNotMatch(class.arity(), actual))
+            } else {
+                let instance = LoxInstance::new(class);
+                Ok(Value::INSTANCE(Rc::new(RefCell::new(instance))))
+            };
+        }
+        unreachable!()
+    }
+
+    fn lookup_var(&self, name: &str, depth: i32) -> Result<Value, RuntimeError> {
+        return if depth >= 0 {
+            self.env.borrow().get_at(name, depth as u32)
+        } else {
+            self.globals.borrow().get(name)
+        };
     }
 }
 
@@ -98,7 +119,7 @@ impl<W: StringWriter> StmtVisitor for Interpreter<W> {
             self.evaluate(expr)?;
             return Ok(());
         }
-        panic!("should not reach here!")
+        unreachable!()
     }
 
     fn visit_print_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err> {
@@ -107,7 +128,7 @@ impl<W: StringWriter> StmtVisitor for Interpreter<W> {
             self.output.write_string(format!("{}\n", value).as_str());
             return Ok(());
         }
-        panic!("should not reach here!")
+        unreachable!()
     }
 
     fn visit_var_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err> {
@@ -117,7 +138,7 @@ impl<W: StringWriter> StmtVisitor for Interpreter<W> {
             self.env.borrow_mut().define(name.clone(), value);
             return Ok(());
         }
-        panic!("should not reach here!")
+        unreachable!()
     }
 
     fn visit_block_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err> {
@@ -126,7 +147,7 @@ impl<W: StringWriter> StmtVisitor for Interpreter<W> {
             self.execute_stmts(stmts, Rc::new(RefCell::new(new_env)))?;
             return Ok(());
         }
-        panic!("should not reach here!")
+        unreachable!()
     }
 
     fn visit_if_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err> {
@@ -138,7 +159,7 @@ impl<W: StringWriter> StmtVisitor for Interpreter<W> {
             }
             return Ok(());
         }
-        panic!("should not reach here!")
+        unreachable!()
     }
 
     fn visit_while_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err> {
@@ -148,7 +169,7 @@ impl<W: StringWriter> StmtVisitor for Interpreter<W> {
             }
             return Ok(());
         }
-        panic!("should not reach here!")
+        unreachable!()
     }
 
     fn visit_func_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err> {
@@ -159,7 +180,7 @@ impl<W: StringWriter> StmtVisitor for Interpreter<W> {
             return Ok(());
         }
 
-        panic!("should not reach here!")
+        unreachable!()
     }
 
     fn visit_ret_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err> {
@@ -167,7 +188,28 @@ impl<W: StringWriter> StmtVisitor for Interpreter<W> {
             let value = self.evaluate(value)?;
             return Err(ReturnValue(value));
         }
-        panic!("should not reach here!")
+        unreachable!()
+    }
+
+    fn visit_class_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err> {
+        if let Stmt::Class(Token { token_type: IDENTIFIER(name), .. }, class_methods) = stmt {
+            let mut env = self.env.borrow_mut();
+            env.define(name.to_string(), Value::NIL);
+
+            let mut methods = HashMap::new();
+            for m in class_methods {
+                if let Stmt::Function(Token { token_type: IDENTIFIER(name), .. },
+                                      params, _body) = m {
+                    let f: Fun = Fun::UserFunc(name.clone(), params.len() as i8, m.clone(), self.env.clone());
+                    methods.insert(name.clone(), Value::FUN(f));
+                }
+            }
+
+            let class = LoxClass::new(name.to_string(), methods);
+            env.assign(name, &Value::CLASS(class))?;
+            return Ok(());
+        }
+        unreachable!()
     }
 }
 
@@ -205,14 +247,14 @@ impl<W: StringWriter> Visitor<ValueResult> for Interpreter<W> {
             };
             return Ok(result);
         }
-        panic!("not a binary expr")
+        unreachable!()
     }
 
     fn visit_grouping(&mut self, expr: &Expr) -> ValueResult {
         if let Expr::Grouping(expr) = expr {
             return self.evaluate(expr);
         }
-        panic!("not a grouping expr")
+        unreachable!()
     }
 
 
@@ -227,7 +269,7 @@ impl<W: StringWriter> Visitor<ValueResult> for Interpreter<W> {
                 Ok(Value::BOOL(v.is_truthy()))
             }
             _ => {
-                unimplemented!()
+                unreachable!()
             }
         }
     }
@@ -252,27 +294,23 @@ impl<W: StringWriter> Visitor<ValueResult> for Interpreter<W> {
     }
 
     fn visit_var_expr(&mut self, expr: &Expr) -> ValueResult {
-        if let Expr::Variable(t, depth) = expr {
-            return if *depth >= 0 {
-                self.env.borrow().get_at(t, *depth as u32)
-            } else {
-                self.globals.borrow().get(t)
-            }
+        if let Expr::Variable(Token{ token_type: IDENTIFIER(name), ..}, depth) = expr {
+            return self.lookup_var(name, *depth);
         }
-        panic!("not a var expr")
+        unreachable!()
     }
 
     fn visit_assign(&mut self, expr: &Expr) -> ValueResult {
-        if let Expr::Assign(t, expr, depth) = expr {
+        if let Expr::Assign(Token { token_type: IDENTIFIER(name), .. }, expr, depth) = expr {
             let value = self.evaluate(expr)?;
             if *depth >= 0 {
-                self.env.borrow_mut().assign_at(t, &value, *depth as u32)?;
+                self.env.borrow_mut().assign_at(name, &value, *depth as u32)?;
             } else {
-                self.globals.borrow_mut().assign(t, &value)?;
+                self.globals.borrow_mut().assign(name, &value)?;
             }
             return Ok(value);
         }
-        panic!("not a var expr")
+        unreachable!()
     }
 
     fn visit_logical(&mut self, expr: &Expr) -> ValueResult {
@@ -284,7 +322,7 @@ impl<W: StringWriter> Visitor<ValueResult> for Interpreter<W> {
                 _ => { self.evaluate(rhs) }
             };
         }
-        panic!("not a logical expr")
+        unreachable!()
     }
 
     fn visit_call(&mut self, expr: &Expr) -> ValueResult {
@@ -296,7 +334,50 @@ impl<W: StringWriter> Visitor<ValueResult> for Interpreter<W> {
             }
             return self.execute_function(callee, args);
         }
-        panic!("not a call expr")
+        unreachable!()
+    }
+
+    fn visit_get(&mut self, expr: &Expr) -> ValueResult {
+        if let Expr::Get(object,
+                         Token { token_type: IDENTIFIER(name), pos }) = expr {
+            let obj = self.evaluate(object)?;
+            return if let Value::INSTANCE(inst) = obj {
+                let v = inst.borrow_mut().get(name)?;
+                if let Value::FUN(mut fun) = v {
+                    fun.bind(inst);
+                    return Ok(Value::FUN(fun))
+                } else {
+                    Ok(v)
+                }
+
+            } else {
+                Err(RuntimeError::NoProperties(pos.line))
+            };
+        }
+        unreachable!()
+    }
+
+    fn visit_set(&mut self, expr: &Expr) -> ValueResult {
+        if let Expr::Set(object,
+                         Token { token_type: IDENTIFIER(name), .. },
+                         value) = expr {
+            let mut obj = self.evaluate(object)?;
+            return if let Value::INSTANCE(ref mut inst) = obj {
+                let value = self.evaluate(value)?;
+                inst.borrow_mut().set(name, &value);
+                return Ok(value);
+            } else {
+                Err(RuntimeError::UnexpectedExpr("expected a instance".to_string()))
+            };
+        }
+        unreachable!()
+    }
+
+    fn visit_this(&mut self, expr: &Expr) -> ValueResult {
+        if let Expr::This(_, d) = expr {
+            return self.lookup_var("this", *d)
+        }
+        unreachable!()
     }
 }
 
@@ -499,6 +580,25 @@ mod test {
                             1597\n\
                             2584\n\
                             4181\n");
+        Ok(())
+    }
+
+    #[test]
+    fn test_class() -> Result<(), LoxError> {
+        let source = r#"
+            class Cake {
+              taste() {
+                var adjective = "delicious";
+                print "The " + this.flavor + " cake is " + adjective + "!";
+              }
+            }
+
+            var cake = Cake();
+            cake.flavor = "German chocolate";
+            cake.taste();
+        "#;
+        let result = eval(source)?;
+        assert_eq!(&result, "The German chocolate cake is delicious!\n");
         Ok(())
     }
 }

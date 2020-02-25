@@ -11,7 +11,6 @@ pub trait Call {
 }
 
 
-type Func = Rc<dyn FnMut(Vec<Value>) -> Value>;
 #[derive(Clone, PartialEq)]
 pub enum Fun {
     Native(String, i8, NativeFn),
@@ -40,6 +39,17 @@ impl Fun {
         match self {
             Fun::Native(name, _, _) => name.as_str(),
             Fun::UserFunc(name, _, _,_) => name.as_str(),
+        }
+    }
+
+    pub fn bind(&mut self, inst: Rc<RefCell<LoxInstance>>) {
+        match self {
+            Fun::UserFunc(_,_,_,env) => {
+                let mut new_env = Environment::new(env.clone());
+                new_env.define("this".to_string(), Value::INSTANCE(inst));
+                *env = Rc::new(RefCell::new(new_env));
+            }
+            _ => {}
         }
     }
 }
