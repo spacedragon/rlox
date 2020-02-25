@@ -15,7 +15,7 @@ pub enum Value {
     STRING(String),
     NUMBER(f64),
     BOOL(bool),
-    FUN(Fun),
+    FUN(Box<Fun>),
     CLASS(Rc<RefCell<LoxClass>>),
     INSTANCE(Rc<RefCell<LoxInstance>>),
     NIL,

@@ -54,7 +54,7 @@ impl Fun {
 
 impl From<Fun> for Value {
     fn from(f: Fun) -> Self {
-        Value::FUN(f)
+        Value::FUN(Box::new(f))
     }
 }
 

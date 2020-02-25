@@ -110,11 +110,11 @@ impl<W: StringWriter> Interpreter<W> {
             } else {
 
                 let instance = Rc::new(RefCell::new(LoxInstance::new(class.clone())));
-                let mut bclass = class.borrow_mut();
-                let init = bclass.find_method_mut("init");
-                if let Some(init) = init {
+                let bclass = class.borrow_mut();
+                let init = bclass.find_method("init");
+                if let Some(mut init) = init {
                     init.bind(instance.clone());
-                    self.call_fun(init, args, true)?;
+                    self.call_fun(&init, args, true)?;
                 }
 
                 return Ok(Value::INSTANCE(instance))
@@ -197,7 +197,7 @@ impl<W: StringWriter> StmtVisitor for Interpreter<W> {
         if let Stmt::Function(Token { token_type: IDENTIFIER(name), .. },
                               params, _body) = stmt {
             let f: Fun = Fun::UserFunc(name.clone(), params.len() as i8, stmt.clone(), self.env.clone());
-            self.env.borrow_mut().define(name.clone(), Value::FUN(f));
+            self.env.borrow_mut().define(name.clone(), Value::FUN(Box::new(f)));
             return Ok(());
         }
 
@@ -213,21 +213,41 @@ impl<W: StringWriter> StmtVisitor for Interpreter<W> {
     }
 
     fn visit_class_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err> {
-        if let Stmt::Class(Token { token_type: IDENTIFIER(name), .. }, class_methods) = stmt {
-            let mut env = self.env.borrow_mut();
-            env.define(name.to_string(), Value::NIL);
+        if let Stmt::Class(Token { token_type: IDENTIFIER(name), pos }, class_methods,superclass) = stmt {
+            let sc = if let Some(superclass) = superclass {
+                let sc = self.evaluate(superclass)?;
+                if let Value::CLASS(cl) = sc {
+                    Some(cl)
+                } else {
+                    return Err(SuperMustBeClass(pos.line))
+                }
+            } else {
+                None
+            };
+            let mut env = self.env.clone();
+            env.borrow_mut().define(name.to_string(), Value::NIL);
+
+            if superclass.is_some() {
+                env = Rc::new(RefCell::new(Environment::new(env)));
+                env.borrow_mut().define("super".to_string(), Value::CLASS(sc.clone().unwrap()));
+            }
 
             let mut methods = HashMap::new();
             for m in class_methods {
                 if let Stmt::Function(Token { token_type: IDENTIFIER(name), .. },
                                       params, _body) = m {
-                    let f: Fun = Fun::UserFunc(name.clone(), params.len() as i8, m.clone(), self.env.clone());
-                    methods.insert(name.clone(), Value::FUN(f));
+                    let f: Fun = Fun::UserFunc(name.clone(), params.len() as i8, m.clone(), env.clone());
+                    methods.insert(name.clone(), Value::FUN(Box::new(f)));
                 }
             }
 
-            let class = LoxClass::new(name.to_string(), methods);
-            env.assign(name, &Value::CLASS(Rc::new(RefCell::new(class))))?;
+            let class = LoxClass::new(name.to_string(), methods, sc);
+
+            if superclass.is_some() {
+                let parent = env.borrow_mut().parent();
+                env = parent;
+            }
+            env.borrow_mut().assign(name, &Value::CLASS(Rc::new(RefCell::new(class))))?;
             return Ok(());
         }
         unreachable!()
@@ -397,6 +417,22 @@ impl<W: StringWriter> Visitor<ValueResult> for Interpreter<W> {
     fn visit_this(&mut self, expr: &Expr) -> ValueResult {
         if let Expr::This(_, d) = expr {
             return self.lookup_var("this", *d)
+        }
+        unreachable!()
+    }
+
+    fn visit_super(&mut self, expr: &Expr) -> ValueResult {
+        if let Expr::Super(_, Token{ token_type: IDENTIFIER(method),..} , d) = expr {
+            if let Value::CLASS(superclass) = self.lookup_var("super", *d)? {
+                if let Value::INSTANCE(inst) = self.lookup_var("this", *d - 1)? {
+                    return if let Some(mut m) = superclass.borrow_mut().find_method(method) {
+                        m.bind(inst);
+                        Ok(Value::FUN(m))
+                    } else {
+                        Err(UndefinedProperty(method.to_string()))
+                    }
+                }
+            }
         }
         unreachable!()
     }
@@ -620,6 +656,32 @@ mod test {
         "#;
         let result = eval(source)?;
         assert_eq!(&result, "The German chocolate cake is delicious!\n");
+        Ok(())
+    }
+
+    #[test]
+    fn test_super() -> Result<(), LoxError> {
+        let source = r#"
+            class Food {
+                name() {
+                   return "food";
+                }
+            }
+            class Cake < Food {
+              taste() {
+                print super.name();
+                var adjective = "delicious";
+                print "The " + this.flavor + " cake is " + adjective + "!";
+              }
+            }
+
+
+            var cake = Cake();
+            cake.flavor = "German chocolate";
+            cake.taste();
+        "#;
+        let result = eval(source)?;
+        assert_eq!(&result, "food\nThe German chocolate cake is delicious!\n");
         Ok(())
     }
 }

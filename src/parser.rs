@@ -13,6 +13,7 @@ pub trait Visitor<R> {
     fn visit_get(&mut self, expr: &Expr) -> R;
     fn visit_set(&mut self, expr: &Expr) -> R;
     fn visit_this(&mut self, expr: &Expr) -> R;
+    fn visit_super(&mut self, expr: &Expr) -> R;
 }
 
 pub trait VisitorMut<R> {
@@ -27,6 +28,7 @@ pub trait VisitorMut<R> {
     fn visit_get(&mut self, expr: &mut Expr) -> R;
     fn visit_set(&mut self, expr: &mut Expr) -> R;
     fn visit_this(&mut self, expr: &mut Expr) -> R;
+    fn visit_super(&mut self, expr: &mut Expr) -> R;
 }
 
 pub trait StmtVisitor {
@@ -64,6 +66,7 @@ pub enum Expr {
     Literal(Token),
     Logical(Box<Expr>, Token, Box<Expr>),
     Set(Box<Expr>, Token, Box<Expr>),
+    Super(Token, Token, i32),
     This(Token, i32),
     Grouping(Box<Expr>),
     Unary(Token, Box<Expr>),
@@ -82,9 +85,10 @@ impl Expr {
             Expr::Assign(_, _, _) => visitor.visit_assign(self),
             Expr::Logical(_, _, _) => visitor.visit_logical(self),
             Expr::Call(_, _, _) => visitor.visit_call(self),
-            Expr::Get(_, _) => { visitor.visit_get(self) }
-            Expr::Set(_, _, _) => { visitor.visit_set(self) }
-            Expr::This(_, _) => { visitor.visit_this(self) }
+            Expr::Get(_, _) => { visitor.visit_get(self) },
+            Expr::Set(_, _, _) => { visitor.visit_set(self) },
+            Expr::This(_, _) => { visitor.visit_this(self) },
+            Expr::Super(_, _, _) => {visitor.visit_super(self)},
         }
     }
 
@@ -101,6 +105,7 @@ impl Expr {
             Expr::Get(_, _) => { visitor.visit_get(self) }
             Expr::Set(_, _, _) => { visitor.visit_set(self) }
             Expr::This(_, _) => { visitor.visit_this(self) }
+            Expr::Super(_, _, _) => {visitor.visit_super(self)}
         }
     }
 }
@@ -112,7 +117,7 @@ pub enum Stmt {
     ReturnStmt(Token, Expr),
     VarStmt(Token, Expr),
     Block(Vec<Stmt>),
-    Class(Token, Vec<Stmt>),
+    Class(Token, Vec<Stmt>, Option<Expr>),
     IfStmt(Expr, Box<Stmt>, Option<Box<Stmt>>),
     WhileStmt(Expr, Box<Stmt>),
     Function(Token, Vec<Token>, Vec<Stmt>),
@@ -129,7 +134,7 @@ impl Stmt {
             Stmt::WhileStmt(_, _) => { visitor.visit_while_stmt(self) }
             Stmt::Function(_, _, _) => { visitor.visit_func_stmt(self) }
             Stmt::ReturnStmt(_, _) => { visitor.visit_ret_stmt(self) }
-            Stmt::Class(_, _) => { visitor.visit_class_stmt(self) }
+            Stmt::Class(_, _, _) => { visitor.visit_class_stmt(self) }
         }
     }
 
@@ -143,7 +148,7 @@ impl Stmt {
             Stmt::WhileStmt(_, _) => { visitor.visit_while_stmt(self) }
             Stmt::Function(_, _, _) => { visitor.visit_func_stmt(self) }
             Stmt::ReturnStmt(_, _) => { visitor.visit_ret_stmt(self) }
-            Stmt::Class(_, _) => { visitor.visit_class_stmt(self) }
+            Stmt::Class(_, _, _) => { visitor.visit_class_stmt(self) }
         }
     }
 }
@@ -186,8 +191,16 @@ impl Parser {
     }
 
     fn class_declaration(&mut self) -> StmtResult {
-        let name = self.expect_id("Expect class name.".to_string())?.clone();
-        self.expect(&LEFT_BRACE, "Expect '{' before class body.".to_string())?;
+        let name = self.expect_id("Expect class name.")?.clone();
+
+        let superclass = if self.matches(vec![LESS]) {
+            self.expect_id("Expect superclass name.")?;
+            Some(Expr::Variable(self.previous().clone(), -1))
+        } else {
+            None
+        };
+
+        self.expect(&LEFT_BRACE, "Expect '{' before class body.")?;
 
         let mut methods = vec![];
 
@@ -196,25 +209,25 @@ impl Parser {
             methods.push(method)
         }
 
-        self.expect(&RIGHT_BRACE, "Expect '}' after class body.".to_string())?;
+        self.expect(&RIGHT_BRACE, "Expect '}' after class body.")?;
 
-        Ok(Stmt::Class(name, methods))
+        Ok(Stmt::Class(name, methods, superclass))
     }
 
     fn function(&mut self, kind: &'static str) -> StmtResult {
         let name =
-            self.expect_id(format!("Expect {} name.", kind))?.clone();
+            self.expect_id(&format!("Expect {} name.", kind))?.clone();
 
-        self.expect(&LEFT_PAREN, "Expect '(' after function name.".to_string())?;
+        self.expect(&LEFT_PAREN, "Expect '(' after function name.")?;
 
         let mut params = vec![];
         while !self.matches(vec![RIGHT_PAREN]) {
-            let param = self.expect_id(String::from("Expect parameter name."))?;
+            let param = self.expect_id("Expect parameter name.")?;
             params.push(param.clone());
             self.matches(vec![COMMA]);
         }
         self.expect(&LEFT_BRACE,
-                    format!("Expect '{{' before {} body.", kind))?;
+                    format!("Expect '{{' before {} body.", kind).as_str())?;
 
         let body = self.block()?;
 
@@ -269,7 +282,7 @@ impl Parser {
             Expr::Literal(Token { token_type: NIL, pos: token.pos.clone() })
         };
 
-        self.expect(&SEMICOLON, "Expect ';' after return.".to_string())?;
+        self.expect(&SEMICOLON, "Expect ';' after return.")?;
         Ok(Stmt::ReturnStmt(token, value))
     }
 
@@ -509,7 +522,7 @@ impl Parser {
                 expr = self.finish_call(expr)?;
             } else if self.matches(vec![DOT]) {
                 let name =
-                    self.expect_id("Expect property name after '.'.".to_string())?;
+                    self.expect_id("Expect property name after '.'.")?;
                 expr = Expr::Get(Box::new(expr), name.clone());
             } else {
                 break;
@@ -560,6 +573,13 @@ impl Parser {
                 self.advance();
                 Ok(Expr::Variable(token, -1))
             }
+            SUPER => {
+                let t= t.clone();
+                self.advance();
+                self.expect(&DOT, "Expect '.' after 'super'.")?;
+                let method = self.expect_id("Expect superclass method name.")?;
+                Ok(Expr::Super(t, method.clone(), -1))
+            }
             THIS => {
                 let token = t.clone();
                 self.advance();
@@ -583,22 +603,22 @@ impl Parser {
             Err(on_err(line))
         }
     }
-    fn expect_id(&mut self, msg: String) -> Result<&Token, ParserError> {
+    fn expect_id(&mut self, msg: &str) -> Result<&Token, ParserError> {
         let t = self.peek();
         if let IDENTIFIER(_name) = &t.token_type {
             self.advance();
             Ok(self.previous())
         } else {
             Err(ExpectError {
-                msg,
+                msg: msg.to_string(),
                 line: t.pos.line,
             })
         }
     }
 
-    fn expect(&mut self, token_type: &TokenType, msg: String) -> Result<&Token, ParserError> {
+    fn expect(&mut self, token_type: &TokenType, msg: &str) -> Result<&Token, ParserError> {
         self.consume(token_type, |line| ExpectError {
-            msg,
+            msg: msg.to_string(),
             line,
         })
     }

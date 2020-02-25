@@ -6,10 +6,13 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use std::fmt::{Display, Formatter};
 
+type PClass = Rc<RefCell<LoxClass>>;
+
 #[derive(Clone, PartialEq, Debug)]
 pub struct LoxClass {
     name: String,
-    methods: HashMap<String, Value>
+    methods: HashMap<String, Value>,
+    superclass: Option<PClass>,
 }
 
 impl Display for LoxClass {
@@ -19,10 +22,11 @@ impl Display for LoxClass {
 }
 
 impl LoxClass {
-    pub fn new(name: String, methods: HashMap<String, Value>) -> Self {
+    pub fn new(name: String, methods: HashMap<String, Value>, superclass: Option<PClass>) -> Self {
         Self {
             name,
-            methods
+            methods,
+            superclass,
         }
     }
 
@@ -34,17 +38,12 @@ impl LoxClass {
         }
     }
 
-    pub fn find_method(&self, name: &str) -> Option<&Fun> {
+    pub fn find_method(&self, name: &str) -> Option<Box<Fun>> {
         if let Some(Value::FUN(fun)) = self.methods.get(name) {
-            Some(fun)
-        } else {
-            None
-        }
-    }
-
-    pub fn find_method_mut(&mut self, name: &str) -> Option<&mut Fun> {
-        if let Some(Value::FUN(fun)) = self.methods.get_mut(name) {
-            Some(fun)
+            let f = fun.clone();
+            Some(f)
+        } else if let Some(s) = &self.superclass {
+            s.borrow().find_method(name)
         } else {
             None
         }
@@ -54,23 +53,23 @@ impl LoxClass {
 
 #[derive(Clone, PartialEq, Debug)]
 pub struct LoxInstance {
-    class: Rc<RefCell<LoxClass>>,
-    fields: HashMap<String, Value>
+    class: PClass,
+    fields: HashMap<String, Value>,
 }
 
 impl LoxInstance {
-    pub fn new(class: Rc<RefCell<LoxClass>>)-> Self {
+    pub fn new(class: PClass) -> Self {
         Self {
             class,
-            fields: HashMap::new()
+            fields: HashMap::new(),
         }
     }
 
     pub fn get(&self, name: &str) -> Result<Value, RuntimeError> {
         if let Some(v) = self.fields.get(name) {
             Ok(v.clone())
-        } else if let Some(m) = self.class.borrow().methods.get(name) {
-            Ok(m.clone())
+        } else if let Some(m) = self.class.borrow().find_method(name) {
+            Ok(Value::FUN(m))
         } else {
             Err(UndefinedProperty(name.to_string()))
         }
@@ -79,7 +78,6 @@ impl LoxInstance {
     pub fn set(&mut self, name: &str, value: &Value) {
         self.fields.insert(name.to_string(), value.clone());
     }
-
 }
 
 impl Display for LoxInstance {

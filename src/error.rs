@@ -90,6 +90,15 @@ quick_error! {
         UseThisOutOfClass {
             display( "Cannot use 'this' outside of a class.")
         }
+        UseSuperOutOfClass {
+            display( "Cannot use 'super' outside of a class.")
+        }
+        UseSuperOutOfSubClass {
+            display( "Cannot use 'super' in a class with no superclass.")
+        }
+        InheritSelf {
+            display( "A class cannot inherit from itself.")
+        }
     }
 }
 quick_error! {
@@ -124,6 +133,9 @@ quick_error! {
         }
         NoProperties(line: usize) {
             display("Only instances have properties.({})", line)
+        }
+        SuperMustBeClass(line: usize) {
+            display("Superclass must be a class.({})", line)
         }
         ReturnValue(value: Value) {}
     }

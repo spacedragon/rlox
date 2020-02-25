@@ -19,6 +19,7 @@ enum FunctionType {
 enum ClassType {
     None,
     Class,
+    SUBCLASS
 }
 
 pub struct Resolver {
@@ -188,8 +189,20 @@ impl VisitorMut<Result<(), ResolverError>> for Resolver {
         if let ClassType::None = self.current_class {
             return Err(UseThisOutOfClass);
         }
-        if let Expr::This(Token { token_type: THIS, .. }, depth) = expr {
+        if let Expr::This(_, depth) = expr {
             *depth = self.resolve_local("this");
+        }
+        Ok(())
+    }
+
+    fn visit_super(&mut self, expr: &mut Expr) -> Result<(), ResolverError> {
+        match self.current_class {
+            ClassType::None => { return Err(UseSuperOutOfClass); },
+            ClassType::Class => { return Err(UseSuperOutOfSubClass); },
+            ClassType::SUBCLASS => {},
+        }
+        if let Expr::Super(_,_, depth) = expr {
+            *depth = self.resolve_local("super");
         }
         Ok(())
     }
@@ -285,10 +298,21 @@ impl StmtVisitorMut for Resolver {
     }
 
     fn visit_class_stmt(&mut self, stmt: &mut Stmt) -> Result<(), Self::Err> {
-        if let Stmt::Class(Token { token_type: IDENTIFIER(name), .. }, methods) = stmt {
+        if let Stmt::Class(Token { token_type: IDENTIFIER(name), .. }, methods, superclass) = stmt {
             let class_type = mem::replace(&mut self.current_class, ClassType::Class);
             self.declare(name)?;
             self.define(name);
+            if let Some(sc) = superclass {
+                if let Expr::Variable(Token { token_type: IDENTIFIER(supername), ..}, ..) = sc {
+                    if supername == name {
+                        return Err(InheritSelf);
+                    }
+                }
+                mem::replace(&mut self.current_class, ClassType::SUBCLASS);
+                self.resolve_expr(sc);
+                self.begin_scope();
+                self.scopes.front_mut().unwrap().insert("super".to_string(), true);
+            }
             self.begin_scope();
             self.scopes.front_mut().unwrap().insert("this".to_string(), true);
 
@@ -302,6 +326,9 @@ impl StmtVisitorMut for Resolver {
                 self.resolve_function(method, d)?;
             }
             self.end_scope();
+            if superclass.is_some() {
+                self.end_scope();
+            }
             mem::replace(&mut self.current_class, class_type);
         }
         Ok(())

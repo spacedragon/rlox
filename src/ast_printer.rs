@@ -82,8 +82,15 @@ impl Visitor<String> for AstPrinter {
     }
 
     fn visit_this(&mut self, expr: &Expr) -> String {
-        if let Expr::This(t,_) = expr {
+        if let Expr::This(_,t) = expr {
             return format!("(this {:?})", t)
+        }
+        unreachable!()
+    }
+
+    fn visit_super(&mut self, expr: &Expr) -> String {
+        if let Expr::Super(_,t, _) = expr {
+            return format!("(super {:?})", t)
         }
         unreachable!()
     }
@@ -168,7 +175,7 @@ impl StmtVisitor for AstPrinter {
     }
 
     fn visit_class_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err> {
-        if let Stmt::Class(Token { token_type: IDENTIFIER(name), ..}, stmts) = stmt {
+        if let Stmt::Class(Token { token_type: IDENTIFIER(name), ..}, stmts, _) = stmt {
             for stmt in stmts {
                 stmt.accept(self)?;
             }
