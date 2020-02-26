@@ -3,6 +3,7 @@
 use structopt::StructOpt;
 use log::{info};
 use std::path::PathBuf;
+use crate::value::Value;
 use crate::scanner::Scanner;
 use crate::parser::Parser;
 use crate::interpreter::Interpreter;
@@ -11,6 +12,7 @@ use std::io::{Stdout, Write};
 use crate::error::LoxError;
 use std::fs;
 use crate::resolver::Resolver;
+use crate::environment::clock;
 
 mod scanner;
 mod parser;
@@ -39,6 +41,9 @@ enum Command {
     Run {
         #[structopt(name = "FILE", parse(from_os_str))]
         files: Vec<PathBuf>
+    },
+    Test {
+
     }
 }
 
@@ -47,6 +52,13 @@ impl StringWriter for Stdout {
         let mut handle = self.lock();
         handle.write_all(s.as_bytes()).expect("write to stdout failed.");
     }
+}
+
+fn fib(n:i64) -> i64 {
+    if n<2 {
+        return n;
+    }
+    return fib(n -1) + fib(n-2);
 }
 
 
@@ -74,6 +86,14 @@ fn main() -> Result<(), LoxError>{
                 let mut interpreter = Interpreter::new(output);
 
                 interpreter.interpret(&stmts)?;
+            }
+        }
+        Command:: Test {} => {
+            if let Value::NUMBER(before) = clock(vec![]) {
+                println!("{}", fib(40));
+                if let Value::NUMBER(after) = clock(vec![]) {
+                    println!("{}", after - before);
+                }
             }
         }
     }

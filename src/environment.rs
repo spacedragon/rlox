@@ -13,7 +13,7 @@ pub struct Environment {
     enclosing: Option<Rc<RefCell<Environment>>>,
 }
 
-fn clock(_: Vec<Value>) -> Value {
+pub fn clock(_: Vec<Value>) -> Value {
     let now = SystemTime::now();
     let d = now.duration_since(SystemTime::UNIX_EPOCH)
         .expect("SystemTime before UNIX EPOCH!");
