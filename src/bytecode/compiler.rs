@@ -1,0 +1,449 @@
+use super::chunk::Chunk;
+use super::scanner::{Scanner, Token, TokenType};
+use super::scanner::TokenType::*;
+use crate::error::LoxError;
+use crate::bytecode::debug::{print_err, disassemble_chunk};
+use crate::bytecode::OpCode::*;
+use std::mem;
+use crate::bytecode::value::Value;
+
+pub struct Compiler {
+    scanner: Scanner,
+    chunk: Chunk,
+    previous: Token,
+    current: Token,
+    had_error: bool,
+    panic_mode: bool,
+}
+
+impl Compiler {
+    pub fn new(scanner: Scanner) -> Self {
+        Self {
+            scanner,
+            chunk: Chunk::new(),
+            previous: Default::default(),
+            current: Default::default(),
+            had_error: false,
+            panic_mode: false,
+        }
+    }
+
+    fn current_chunk(&mut self) -> &mut Chunk {
+        &mut self.chunk
+    }
+
+    pub fn compile(mut self) -> Result<Chunk, LoxError> {
+        self.scanner.init();
+
+        self.had_error = false;
+        self.panic_mode = false;
+
+        self.advance();
+
+        while !self.matches(EOF) {
+            self.declaration();
+        }
+        self.consume(EOF, "Expect end of expression.");
+
+        self.end_compiler();
+        Ok(self.chunk)
+    }
+
+    fn declaration(&mut self) {
+        if self.matches(VAR) {
+            self.var_declaration();
+        } else {
+            self.statement();
+        }
+
+
+        if self.panic_mode {
+            self.synchronize()
+        }
+    }
+
+    fn var_declaration(&mut self) {
+        let global = self.parse_var("Expect variable name.");
+
+        if self.matches(EQUAL) {
+            self.expression();
+        } else {
+            self.emit_op(OpNil);
+        }
+        self.consume(SEMICOLON, "Expect ';' after variable declaration.");
+
+        self.define_var(global);
+    }
+
+    fn define_var(&mut self, global: u8) {
+        self.emit_bytes(OpDefineGlobal.into(), global);
+    }
+
+    fn parse_var(&mut self, err: &str) -> u8 {
+        self.consume(IDENTIFIER, err);
+        let token = &self.previous;
+        let name =self.scanner.get_identifier(token);
+        self.identifier_constant(name)
+    }
+
+    fn identifier_constant(&mut self, name: String) ->u8 {
+        let v: Value = self.current_chunk().make_string(name).into();
+        self.make_constant(v)
+    }
+
+    fn make_constant(&mut self, v: Value) -> u8 {
+        self.current_chunk().add_constant(v)
+    }
+    fn synchronize(&mut self) {
+        self.panic_mode = false;
+        while self.current.t != EOF {
+            if self.previous.t == SEMICOLON {
+                return;
+            }
+
+            match self.current.t {
+                CLASS |
+                FUN |
+                VAR |
+                FOR |
+                IF |
+                WHILE |
+                PRINT |
+                RETURN => return,
+                _ => {}
+            }
+
+            self.advance();
+        }
+    }
+
+    fn statement(&mut self) {
+        if self.matches(PRINT) {
+            self.print_statement();
+        } else {
+            self.expression_statement();
+        }
+    }
+
+    fn expression_statement(&mut self) {
+        self.expression();
+        self.consume(SEMICOLON, "Expect ';' after expression.");
+        self.emit_op(OpPop);
+    }
+
+    fn print_statement(&mut self) {
+        self.expression();
+        self.consume(SEMICOLON, "Expect ';' after value.");
+        self.emit_op(OpPrint)
+    }
+
+    fn matches(&mut self, t: TokenType) -> bool {
+        if !self.check(t) {
+            return false;
+        }
+        self.advance();
+        true
+    }
+
+    fn check(&mut self, t: TokenType) -> bool {
+        self.current.t == t
+    }
+
+    pub fn advance(&mut self) {
+        mem::replace(&mut self.previous, self.current.clone());
+
+
+        loop {
+            match self.scanner.scan_token() {
+                Ok(t) => {
+                    mem::replace(&mut self.current, t);
+                    return;
+                }
+                Err(e) => {
+                    self.error_at(e.into())
+                }
+            }
+        }
+    }
+    fn error_at_current(&mut self, e: &str) {
+        let token = &self.current;
+        if self.panic_mode {
+            return;
+        }
+        self.panic_mode = true;
+        print_err(format!("[line {}]", token.pos.line));
+        match token.t {
+            EOF => {
+                print_err(" at end".to_string())
+            }
+            _ => {
+                print_err(format!(" at '{}.{}'", token.pos.len, token.pos.start));
+            }
+        }
+        print_err(e.to_string());
+
+        self.had_error = true;
+    }
+
+    fn error_at(&mut self, e: LoxError) {
+        self.error_at_current(format!("{}", e).as_str());
+    }
+
+    fn emit_op(&mut self, op: OpCode) {
+        self.emit_byte(op.into())
+    }
+
+    fn emit_byte(&mut self, byte: u8) {
+        let line = self.previous.pos.line;
+        self.current_chunk().write_chunk(byte, line as i32);
+    }
+
+    fn emit_bytes(&mut self, byte1: u8, byte2: u8) {
+        self.emit_byte(byte1);
+        self.emit_byte(byte2);
+    }
+
+    fn end_compiler(&mut self) {
+        self.emit_return();
+        if !self.had_error {
+            #[cfg(debug_assertions)]
+                disassemble_chunk(&self.current_chunk(), "code")
+        }
+    }
+
+    fn number(&mut self, _can_assign: bool) {
+        if self.previous.t == NUMBER {
+            let v = self.scanner.get_number(&self.previous);
+            self.emit_constant(Value::Number(v))
+        }
+    }
+
+    fn emit_constant(&mut self, value: Value) {
+        let line = self.previous.pos.line as i32;
+        self.current_chunk().write_constant(value, line);
+    }
+
+    fn emit_return(&mut self) {
+        self.emit_byte(OpReturn.into());
+    }
+
+    fn expression(&mut self) {
+        self.parse_precedence(PREC_ASSIGNMENT);
+    }
+
+    fn parse_precedence(&mut self, precedence: Precedence) {
+        self.advance();
+
+        let precedence = precedence as u8;
+        let can_assign = precedence <= (PREC_ASSIGNMENT as u8);
+
+        let prefix_rule = get_rule(self.previous.t).prefix;
+        if let Some(prefix_rule) = prefix_rule {
+            prefix_rule(self, can_assign)
+        } else {
+            self.error_at_current("Expect expression.");
+        }
+
+        while precedence <= (get_rule(self.current.t).precedence as u8) {
+            self.advance();
+            if let Some(infix) = get_rule(self.previous.t).infix {
+                infix(self, can_assign);
+            }
+        }
+
+        if can_assign && self.matches(EQUAL) {
+            self.error_at_current("Invalid assigment target.")
+        }
+    }
+
+    fn grouping(&mut self, _can_assign: bool) {
+        self.expression();
+        self.consume(RIGHT_PAREN, "Expect ')' after expression.");
+    }
+
+    fn consume(&mut self, token_type: TokenType, message: &str) {
+        if self.current.t == token_type {
+            self.advance();
+            return;
+        }
+        self.error_at_current(message);
+    }
+
+    fn unary(&mut self, _can_assign: bool) {
+        let operator_type = &self.previous.t.clone();
+
+        // Compile the operand.
+        self.parse_precedence(PREC_UNARY);
+
+        // Emit the operator instruction.
+        match operator_type {
+            BANG => self.emit_op(OpNot),
+            MINUS => self.emit_op(OpNegate),
+            _ => {
+                unreachable!()
+            }
+        }
+    }
+
+    fn binary(&mut self, _can_assign: bool) {
+        let op_type = &self.previous.t.clone();
+
+        let rule = get_rule(*op_type);
+        let pre_num: u8 = rule.precedence.clone().into();
+        let higher = Precedence::try_from(pre_num + 1).expect("no higher precedence?");
+        self.parse_precedence(higher);
+        match op_type {
+            PLUS => self.emit_op(OpAdd),
+            MINUS => self.emit_op(OpSubtract),
+            STAR => self.emit_op(OpMultiply),
+            SLASH => self.emit_op(OpDivide),
+            BANG_EQUAL => {
+                self.emit_op(OpEqual);
+                self.emit_op(OpNot)
+            }
+            EQUAL_EQUAL => self.emit_op(OpEqual),
+            GREATER => self.emit_op(OpGreater),
+            GREATER_EQUAL => {
+                self.emit_op(OpLess);
+                self.emit_op(OpNot);
+            }
+            LESS => self.emit_op(OpLess),
+            LESS_EQUAL => {
+                self.emit_op(OpGreater);
+                self.emit_op(OpNot)
+            }
+            _ => unreachable!()
+        }
+    }
+
+    fn literal(&mut self, _can_assign: bool) {
+        match self.previous.t {
+            FALSE => self.emit_op(OpFalse),
+            TRUE => self.emit_op(OpTrue),
+            NIL => self.emit_op(OpNil),
+            _ => { unreachable!() }
+        }
+    }
+
+    fn string(&mut self, _can_assign: bool) {
+        let s = self.scanner.get_string(&self.previous);
+        let intern_id = self.current_chunk().make_string(s);
+        let value = intern_id.into();
+        self.emit_constant(value)
+    }
+
+    fn variable(&mut self, can_assign: bool) {
+        let name = self.scanner.get_identifier(&self.previous);
+        self.named_var(name, can_assign)
+    }
+
+    fn named_var(&mut self, name: String, can_assign: bool) {
+        let arg = self.identifier_constant(name);
+
+        if can_assign && self.matches(EQUAL) {
+            self.expression();
+            self.emit_bytes(OpSetGlobal.into(), arg);
+        } else {
+            self.emit_bytes(OpGetGlobal.into(), arg);
+        }
+    }
+}
+
+fn get_rule(token_type: TokenType) -> &'static ParseRule {
+    let idx = token_type as u8;
+    &RULES[idx as usize]
+}
+
+use Precedence::*;
+use crate::bytecode::OpCode;
+use num_enum::{IntoPrimitive, TryFromPrimitive};
+use std::convert::TryFrom;
+
+
+#[allow(non_camel_case_types)]
+#[repr(u8)]
+#[derive(Debug, PartialEq, Eq, TryFromPrimitive, IntoPrimitive, Clone, Copy)]
+enum Precedence {
+    PREC_NONE,
+    PREC_ASSIGNMENT,
+    // =
+    PREC_OR,
+    // or
+    PREC_AND,
+    // and
+    PREC_EQUALITY,
+    // == !=
+    PREC_COMPARISON,
+    // < > <= >=
+    PREC_TERM,
+    // + -
+    PREC_FACTOR,
+    // * /
+    PREC_UNARY,
+    // ! -
+    PREC_CALL,
+    // . ()
+    PREC_PRIMARY,
+}
+
+type ParseFn = fn(&mut Compiler, bool) -> ();
+
+struct ParseRule {
+    prefix: Option<ParseFn>,
+    infix: Option<ParseFn>,
+    precedence: Precedence,
+}
+
+macro_rules! rule_expr {
+    ($prefix:expr, $infix:expr, $prec:expr ) => { ParseRule {prefix:$prefix, infix:$infix,  precedence:$prec } }
+}
+
+macro_rules! rule {
+    (None, None, $prec:expr ) => { rule_expr!(None, None, $prec) };
+    ($prefix:ident, None, $prec:expr ) => { rule_expr!(Some(Compiler::$prefix), None, $prec) };
+    (None, $infix:ident, $prec:expr ) => { rule_expr!(None, Some(Compiler::$infix), $prec) };
+    ($prefix:ident, $infix:ident, $prec:expr ) => { rule_expr!(Some(Compiler::$prefix), Some(Compiler::$infix), $prec) };
+}
+
+static RULES: [ParseRule; 40] = [
+    rule!(grouping, None, PREC_NONE), // TOKEN_LEFT_PAREN
+    rule! {None, None, PREC_NONE },       // TOKEN_RIGHT_PAREN
+    rule! { None,  None,  PREC_NONE },      // TOKEN_LEFT_BRACE
+    rule! { None,  None,  PREC_NONE },       // TOKEN_RIGHT_BRACE
+    rule! { None,  None,  PREC_NONE },       // TOKEN_COMMA
+    rule! { None,  None,  PREC_NONE },       // TOKEN_DOT
+    rule! { unary, binary,  PREC_TERM },       // TOKEN_MINUS
+    rule! { None,  binary,  PREC_TERM },       // TOKEN_PLUS
+    rule! { None,  None,  PREC_NONE },       // TOKEN_SEMICOLON
+    rule! { None,  binary,  PREC_FACTOR },     // TOKEN_SLASH
+    rule! { None,  binary,  PREC_FACTOR },     // TOKEN_STAR
+    rule! { unary,  None,  PREC_NONE },       // TOKEN_BANG
+    rule! { None,  binary,  PREC_EQUALITY },       // TOKEN_BANG_EQUAL
+    rule! { None,  None,  PREC_NONE },       // TOKEN_EQUAL
+    rule! { None,  binary,  PREC_EQUALITY },       // TOKEN_EQUAL_EQUAL
+    rule! { None,  binary,  PREC_COMPARISON },       // TOKEN_GREATER
+    rule! { None,  binary,  PREC_COMPARISON },       // TOKEN_GREATER_EQUAL
+    rule! { None,  binary,  PREC_COMPARISON },       // TOKEN_LESS
+    rule! { None,  binary,  PREC_COMPARISON },       // TOKEN_LESS_EQUAL
+    rule! { variable,  None,  PREC_NONE },       // TOKEN_IDENTIFIER
+    rule! { string,  None,  PREC_NONE },       // TOKEN_STRING
+    rule! { number,  None,  PREC_NONE },       // TOKEN_NUMBER
+    rule! { None,  None,  PREC_NONE },       // TOKEN_AND
+    rule! { None,  None,  PREC_NONE },       // TOKEN_CLASS
+    rule! { None,  None,  PREC_NONE },       // TOKEN_ELSE
+    rule! { literal,  None,  PREC_NONE },       // TOKEN_FALSE
+    rule! { None,  None,  PREC_NONE },       // TOKEN_FOR
+    rule! { None,  None,  PREC_NONE },       // TOKEN_FUN
+    rule! { None,  None,  PREC_NONE },       // TOKEN_IF
+    rule! { literal,  None,  PREC_NONE },       // TOKEN_NIL
+    rule! { None,  None,  PREC_NONE },       // TOKEN_OR
+    rule! { None,  None,  PREC_NONE },       // TOKEN_PRINT
+    rule! { None,  None,  PREC_NONE },       // TOKEN_RETURN
+    rule! { None,  None,  PREC_NONE },       // TOKEN_SUPER
+    rule! { None,  None,  PREC_NONE },       // TOKEN_THIS
+    rule! { literal,  None,  PREC_NONE },       // TOKEN_TRUE
+    rule! { None,  None,  PREC_NONE },       // TOKEN_VAR
+    rule! { None,  None,  PREC_NONE },       // TOKEN_WHILE
+    rule! { None,  None,  PREC_NONE },       // TOKEN_ERROR
+    rule! { None,  None,  PREC_NONE },       // TOKEN_EOF
+];

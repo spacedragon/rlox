@@ -7,22 +7,24 @@ use crate::value::Value;
 use crate::scanner::Scanner;
 use crate::parser::Parser;
 use crate::interpreter::Interpreter;
-use crate::string_writer::StringWriter;
-use std::io::{Stdout, Write};
+
 use crate::error::LoxError;
 use std::fs;
 use crate::resolver::Resolver;
 use crate::environment::clock;
+use crate::output::Output;
+use std::io::stdout;
 
 mod scanner;
 mod parser;
 mod ast_printer;
 mod interpreter;
-mod string_writer;
 mod environment;
 mod value;
 mod resolver;
 mod error;
+mod bytecode;
+mod output;
 
 #[derive(StructOpt, Debug)]
 #[structopt(name = "rlox")]
@@ -47,28 +49,34 @@ enum Command {
     }
 }
 
-impl StringWriter for Stdout {
-    fn write_string(&mut self, s: &str) {
-        let mut handle = self.lock();
-        handle.write_all(s.as_bytes()).expect("write to stdout failed.");
-    }
-}
+
 
 fn fib(n:i64) -> i64 {
     if n<2 {
         return n;
     }
-    return fib(n -1) + fib(n-2);
+    fib(n -1) + fib(n-2)
 }
 
+
+use crate::bytecode::vm::VM;
+use crate::bytecode::compiler::Compiler;
+use crate::bytecode::scanner::Scanner as CScanner;
 
 fn main() -> Result<(), LoxError>{
     env_logger::init();
     info!("starting up");
     let matches = Opt::from_args();
     match &matches.cmd {
-        Command::Compile{ .. }  => {
-
+        Command::Compile{ files }  => {
+            for file in files {
+                let source = fs::read_to_string(file)?;
+                let scanner = CScanner::new(&source);
+                let compiler = Compiler::new(scanner);
+                let chunk = compiler.compile()?;
+                let mut vm: VM = VM::new(chunk);
+                vm.interpret();
+            }
         }
         Command::Run{ files }  => {
             if files.is_empty() {
@@ -82,7 +90,7 @@ fn main() -> Result<(), LoxError>{
                 let mut stmts = parser.parse()?;
                 let mut resolver = Resolver::new();
                 resolver.resolve(&mut stmts);
-                let output = std::io::stdout();
+                let output = stdout();
                 let mut interpreter = Interpreter::new(output);
 
                 interpreter.interpret(&stmts)?;

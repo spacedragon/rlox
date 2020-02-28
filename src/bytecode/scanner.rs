@@ -1,125 +1,67 @@
-use lazy_static::lazy_static;
-use strum_macros::{Display};
-
-
-
+use num_enum::{IntoPrimitive, TryFromPrimitive};
+#[repr(u8)]
 #[allow(non_camel_case_types)]
-#[derive(Clone, Debug, PartialEq, Display)]
+#[derive(Clone, Copy, Debug, PartialEq, TryFromPrimitive, IntoPrimitive)]
 pub enum TokenType {
-    // Single-character tokens.
-    #[strum(serialize="(")]
-    LEFT_PAREN,
-    #[strum(serialize=")")]
-    RIGHT_PAREN,
-    #[strum(serialize="{")]
-    LEFT_BRACE,
-    #[strum(serialize="}")]
-    RIGHT_BRACE,
-    #[strum(serialize=",")]
-    COMMA,
-    #[strum(serialize=".")]
-    DOT,
-    #[strum(serialize="-")]
-    MINUS,
-    #[strum(serialize="+")]
-    PLUS,
-    #[strum(serialize=";")]
-    SEMICOLON,
-    #[strum(serialize="/")]
-    SLASH,
-    #[strum(serialize="*")]
-    STAR,
+    // Single-character tokens.                         
+    LEFT_PAREN, RIGHT_PAREN,
+    LEFT_BRACE, RIGHT_BRACE,
+    COMMA, DOT, MINUS, PLUS,
+    SEMICOLON, SLASH, STAR,
 
-    // One or two character tokens.
-    #[strum(serialize="!")]
-    BANG,
-    #[strum(serialize="!=")]
-    BANG_EQUAL,
-    #[strum(serialize="=")]
-    EQUAL,
-    #[strum(serialize="==")]
-    EQUAL_EQUAL,
-    #[strum(serialize=">")]
-    GREATER,
-    #[strum(serialize=">=")]
-    GREATER_EQUAL,
-    #[strum(serialize="<")]
-    LESS,
-    #[strum(serialize="<=")]
-    LESS_EQUAL,
+    // One or two character tokens.                     
+    BANG, BANG_EQUAL,
+    EQUAL, EQUAL_EQUAL,
+    GREATER, GREATER_EQUAL,
+    LESS, LESS_EQUAL,
 
-    // Literals.
-    IDENTIFIER(String),
-    STRING(String),
-    NUMBER(f64),
+    // Literals.                                        
+    IDENTIFIER, STRING, NUMBER,
 
-    // Keywords.
-    #[strum(serialize="and")]
-    AND,
-    #[strum(serialize="class")]
-    CLASS,
-    #[strum(serialize="else")]
-    ELSE,
-    #[strum(serialize="false")]
-    FALSE,
-    #[strum(serialize="fun")]
-    FUN,
-    #[strum(serialize="for")]
-    FOR,
-    #[strum(serialize="if")]
-    IF,
-    #[strum(serialize="nil")]
-    NIL,
-    #[strum(serialize="or")]
-    OR,
-    #[strum(serialize="print")]
-    PRINT,
-    #[strum(serialize="return")]
-    RETURN,
-    #[strum(serialize="super")]
-    SUPER,
-    #[strum(serialize="this")]
-    THIS,
-    #[strum(serialize="true")]
-    TRUE,
-    #[strum(serialize="var")]
-    VAR,
-    #[strum(serialize="while")]
-    WHILE,
+    // Keywords.                                        
+    AND, CLASS, ELSE, FALSE,
+    FOR, FUN, IF, NIL, OR,
+    PRINT, RETURN, SUPER, THIS,
+    TRUE, VAR, WHILE,
 
-    EOF,
+    ERROR,
+    EOF
 }
 
-impl TokenType {}
+fn get_keyword(str: &str) -> Option<TokenType> {
+    match str {
+    "and" =>   Some(AND),
+    "class" =>  Some(CLASS),
+    "else" =>   Some(ELSE),
+    "false" =>  Some(FALSE),
+    "for" =>   Some(FOR),
+    "fun" =>   Some(FUN),
+    "if"  =>   Some(IF),
+    "nil" =>   Some(NIL),
+    "or"  =>   Some(OR),
+    "print" =>  Some(PRINT),
+    "return" => Some(RETURN),
+    "super" =>  Some(SUPER),
+    "this" =>   Some(THIS),
+    "true" =>   Some(TRUE),
+    "var" =>   Some(VAR),
+    "while" =>  Some(WHILE),
+        _ => None
+    }
+}
+
+impl Display for TokenType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let v:u8 = self.clone().into();
+        write!(f, "{}", v)
+    }
+}
+
 
 use TokenType::*;
 use crate::error::ScannerError::*;
-use std::collections::HashMap;
 use crate::error::ScannerError;
-use std::fmt::Formatter;
-
-lazy_static! {
-    static ref KEYWORDS: HashMap<&'static str, TokenType> = {
-        let mut m = HashMap::new();
-        m.insert("and",    AND);
-        m.insert("class",  CLASS);
-        m.insert("else",   ELSE);
-        m.insert("false",  FALSE);
-        m.insert("for",    FOR);
-        m.insert("fun",    FUN);
-        m.insert("if",     IF);
-        m.insert("nil",    NIL);
-        m.insert("or",     OR);
-        m.insert("print",  PRINT);
-        m.insert("return", RETURN);
-        m.insert("super",  SUPER);
-        m.insert("this",   THIS);
-        m.insert("true",   TRUE);
-        m.insert("var",    VAR);
-        m.insert("while",  WHILE);
-        m
-    };
-}
+use std::fmt::{Formatter, Display};
 
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -141,23 +83,23 @@ impl Default for Pos {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Token {
-    pub token_type: TokenType,
+    pub t: TokenType,
     pub pos: Pos,
 }
 
 impl Default for Token {
     fn default() -> Self {
         Token {
-            token_type: EOF,
+            t: EOF,
             pos: Default::default()
         }
     }
 }
 
 impl Token {
-    pub fn new(token_type: TokenType, pos: Pos) -> Self {
+    pub fn new(t: TokenType, pos: Pos) -> Self {
         Token {
-            token_type,
+            t,
             pos
         }
     }
@@ -165,7 +107,7 @@ impl Token {
 
 impl std::fmt::Display for Token {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.token_type)
+        write!(f, "{}", self.t)
     }
 }
 
@@ -196,25 +138,6 @@ impl Scanner {
         self.current >= self.source.len()
     }
 
-    pub fn scan_tokens(mut self) -> Result<Vec<Token>, ScannerError> {
-        let mut tokens = Vec::new();
-        while !self.is_at_end() {
-            self.start = self.current;
-            let t = self.scan_token()?;
-            tokens.push(t);
-        }
-        tokens.push(Token {
-            token_type: EOF,
-            pos: Pos {
-                line: self.line,
-                start: self.start,
-                len: 0,
-            },
-        });
-        Result::Ok(tokens)
-    }
-
-
     fn advance(&mut self) -> char {
         self.current += 1;
         self.source[self.current - 1]
@@ -222,6 +145,11 @@ impl Scanner {
 
     pub fn scan_token(&mut self) -> Result<Token, ScannerError> {
         self.skip_whitespace();
+        self.start = self.current;
+        if self.is_at_end() {
+            return Ok(self.make_token(EOF));
+        }
+
         let c = self.advance();
         let token = match c {
             '(' => self.make_token(LEFT_PAREN),
@@ -270,7 +198,10 @@ impl Scanner {
                 ' ' | '\r' | '\t' => {
                     self.advance();
                 },
-                '\n' => self.line += 1,
+                '\n' => {
+                    self.advance();
+                    self.line += 1
+                },
                 '/' => {
                     if self.matches('/') {
                         // A comment goes until the end of the line.
@@ -300,8 +231,7 @@ impl Scanner {
         }
         self.advance();
 
-        let value = self.source[self.start + 1..self.current - 1].iter().collect();
-        Ok(self.make_token(STRING(value)))
+        Ok(self.make_token(STRING))
     }
 
     fn number(&mut self) -> Result<Token, ScannerError> {
@@ -314,10 +244,9 @@ impl Scanner {
         while self.peek().is_digit(10) {
             self.advance();
         }
-        let value_str: String = self.source[self.start..self.current].iter().collect();
-        let value: f64 = value_str.parse().map_err(|_| InvalidNumber(self.line,value_str))?;
 
-        Ok(self.make_token(NUMBER(value)))
+
+        Ok(self.make_token(NUMBER))
     }
 
     fn identifier(&mut self) -> Token {
@@ -325,12 +254,14 @@ impl Scanner {
             self.advance();
         }
         let value_str: String = self.source[self.start..self.current].iter().collect();
-        if let Some(k) = KEYWORDS.get(value_str.as_str()) {
+        if let Some(k) = get_keyword(&value_str) {
             self.make_token(k.clone())
         } else {
-            self.make_token(IDENTIFIER(value_str))
+            self.make_token(IDENTIFIER)
         }
     }
+
+
 
     fn peek(&self) -> char {
         if self.is_at_end() {
@@ -352,14 +283,38 @@ impl Scanner {
     }
 
     fn make_token(&mut self, token_type: TokenType) -> Token {
-         Token {
-            token_type,
+        Token {
+            t: token_type,
             pos: Pos {
                 start: self.start,
                 line: self.line,
-                len: self.current - self.start + 1,
+                len: self.current - self.start,
             },
         }
+    }
+
+    pub fn get_identifier(&self, token: &Token) -> String {
+        let Pos { start, len, ..} = &token.pos;
+        let chars = &self.source[(*start)..(start+len)];
+        let result: String = chars.iter().collect();
+        result
+    }
+
+    pub fn get_string(&self, token: &Token) -> String {
+        let Pos { start, len, ..} = &token.pos;
+        let chars = &self.source[(start+1)..(start+len -1)];
+        let result: String = chars.iter().collect();
+        result
+    }
+
+    pub fn get_number(&self, token: &Token) -> f64 {
+        let Pos { start, len, ..} = &token.pos;
+        let chars = &self.source[(*start)..(start+len)];
+        let result: String = chars.iter().collect();
+
+        let value: f64 = result.parse()
+            .expect(format!("can't parse number from '{}'", result).as_str());
+        value
     }
 }
 
@@ -367,54 +322,34 @@ impl Scanner {
 mod test {
     use super::*;
 
-    fn matches(source: &str, expected: Vec<TokenType>) {
-        let scanner = Scanner::new(source);
-        let tokens = scanner.scan_tokens().unwrap();
-        let result: Vec<TokenType> = tokens.iter().map(|t| t.token_type.clone()).collect();
-        assert_eq!(result, expected);
-    }
-
-
-
     #[test]
-    fn test_single_token() {
-        matches("(", vec![LEFT_PAREN, EOF]);
-        matches("( )", vec![LEFT_PAREN, RIGHT_PAREN, EOF]);
-        matches("()/", vec![LEFT_PAREN, RIGHT_PAREN, SLASH, EOF]);
-    }
-
-    #[test]
-    fn test_2_tokens() {
-        matches(">", vec![GREATER, EOF]);
-        matches(">=", vec![GREATER_EQUAL, EOF]);
-        matches("==", vec![EQUAL_EQUAL,  EOF]);
-    }
-
-    #[test]
-    fn test_comment() {
-        matches("//abcdef", vec![EOF]);
+    fn test_token_code() {
+        let code: u8 = LEFT_PAREN.into();
+        assert_eq!(code, 0u8);
+        let code: u8 = EOF.into();
+        assert_eq!(code, 39u8);
+        let code: u8 = BANG.into();
+        assert_eq!(code, 11u8);
     }
 
     #[test]
     fn test_string() {
-        matches("\"aaa\"", vec![STRING(String::from("aaa")), EOF]);
-    }
-
-    #[test]
-    #[should_panic]
-    fn test_bad_string() {
-        matches("\"aaa", vec![STRING(String::from("aaa")), EOF]);
+        let mut scanner = Scanner::new(r#""aaa""#);
+        let token = scanner.scan_token().unwrap();
+        assert_eq!(token.t, STRING);
+        assert_eq!(token.pos.start, 0);
+        assert_eq!(token.pos.len, 5);
+        assert_eq!(scanner.get_string(&token), "aaa".to_string());
     }
 
     #[test]
     fn test_number() {
-        matches("12.34", vec![NUMBER(12.34f64), EOF]);
-        matches("1234", vec![NUMBER(1234f64), EOF]);
+        let mut scanner = Scanner::new(r#" 256.128 "#);
+        let token = scanner.scan_token().unwrap();
+        assert_eq!(token.t, NUMBER);
+        assert_eq!(token.pos.start, 1);
+        assert_eq!(token.pos.len, 7);
+        assert_eq!(scanner.get_number(&token), 256.128f64);
     }
 
-    #[test]
-    fn test_id_and_keyword() {
-        matches("and", vec![AND, EOF]);
-        matches("_avar", vec![IDENTIFIER(String::from("_avar")), EOF]);
-    }
 }

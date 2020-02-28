@@ -3,7 +3,6 @@ use crate::scanner::TokenType::*;
 
 
 use crate::scanner::Token;
-use crate::string_writer::StringWriter;
 use crate::environment::Environment;
 use crate::value::{Value, Fun, LoxClass};
 use std::rc::Rc;
@@ -12,17 +11,20 @@ use crate::error::RuntimeError;
 use RuntimeError::*;
 use std::collections::HashMap;
 use crate::value::class::LoxInstance;
+use crate::Output;
 
 type ValueResult = Result<Value, RuntimeError>;
 
-pub struct Interpreter<W: StringWriter> {
-    output: W,
+
+
+pub struct Interpreter<O: Output> {
+    output: O,
     globals: Rc<RefCell<Environment>>,
     env: Rc<RefCell<Environment>>,
 }
 
-impl<W: StringWriter> Interpreter<W> {
-    pub fn new(output: W) -> Self {
+impl<O: Output> Interpreter<O> {
+    pub fn new(output: O) -> Self {
         let globals = Rc::new(RefCell::new(Environment::global()));
         Interpreter {
             output,
@@ -132,7 +134,7 @@ impl<W: StringWriter> Interpreter<W> {
     }
 }
 
-impl<W: StringWriter> StmtVisitor for Interpreter<W> {
+impl <O: Output> StmtVisitor for Interpreter<O> {
     type Err = RuntimeError;
 
     fn visit_expr_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err> {
@@ -146,7 +148,7 @@ impl<W: StringWriter> StmtVisitor for Interpreter<W> {
     fn visit_print_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err> {
         if let Stmt::PrintStmt(expr) = stmt {
             let value = self.evaluate(expr)?;
-            self.output.write_string(format!("{}\n", value).as_str());
+            self.output.write_string(format!("{}", value));
             return Ok(());
         }
         unreachable!()
@@ -254,7 +256,7 @@ impl<W: StringWriter> StmtVisitor for Interpreter<W> {
     }
 }
 
-impl<W: StringWriter> Visitor<ValueResult> for Interpreter<W> {
+impl <O: Output> Visitor<ValueResult> for Interpreter<O> {
     fn visit_binary(&mut self, expr: &Expr) -> ValueResult {
         if let Expr::Binary(lhs, op, rhs) = expr {
             let left = self.evaluate(lhs)?;
