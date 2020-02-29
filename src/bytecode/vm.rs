@@ -24,8 +24,8 @@ use OpCode::*;
 use super::value::Value;
 use crate::bytecode::debug::{print_err, disassemble_instruction, println};
 use crate::error::RuntimeError::*;
-use crate::bytecode::value::Obj::ObjString;
 use std::collections::HashMap;
+use crate::bytecode::memory::{Allocator, Obj};
 
 const STACK_MAX: usize = 256;
 
@@ -33,7 +33,8 @@ pub struct VM {
     chunk: Chunk,
     ip: usize,
     stack: Vec<Value>,
-    globals: HashMap<String, Value>
+    globals: HashMap<String, Value>,
+    pub(crate) allocator: Allocator,
 }
 
 impl VM {
@@ -42,7 +43,8 @@ impl VM {
             chunk,
             ip: 0,
             stack: Vec::with_capacity(STACK_MAX),
-            globals: HashMap::new()
+            globals: HashMap::new(),
+            allocator: Allocator::new(),
         }
     }
 
@@ -134,10 +136,11 @@ impl VM {
                         if self.peek(0).is_string() || self.peek(1).is_string() {
                             let b = self.pop();
                             let a = self.pop();
-                            let s = format!("{}{}", self.chunk.get_string(a.as_string()),
-                                            self.chunk.get_string(b.as_string()));
-                            let c = self.chunk.make_string(s).into();
-                            self.push(c)
+                            let s = format!("{}{}", a.as_str(),
+                                            b.as_str());
+                            let chars: Vec<char> = s.chars().collect();
+                            let c = self.allocator.allocate_string(&chars);
+                            self.push(Value::Obj(c))
                         } else {
                             bin_op!(self, +);
                         }
@@ -166,12 +169,12 @@ impl VM {
                     OpGreater => bin_op!(self, >),
                     OpLess => bin_op!(self, <),
                     OpPrint => {
-                        let v= self.pop();
+                        let v = self.pop();
                         self.print_value(v);
                     }
                     OpPop => { self.pop(); }
                     OpPopN => {
-                        let n =self.read_byte() as usize;
+                        let n = self.read_byte() as usize;
                         self.stack.truncate(self.stack.len() - n);
                     }
                     OpDefineGlobal => {
@@ -185,7 +188,7 @@ impl VM {
                             let v = v.clone();
                             self.push(v)
                         } else {
-                            return Err(UndefinedVar(name))
+                            return Err(UndefinedVar(name));
                         }
                     }
                     OpSetGlobal => {
@@ -224,23 +227,16 @@ impl VM {
     }
 
 
-
     fn read_string(&mut self) -> String {
         let c = self.read_constant();
-        let name = c.as_string();
-        self.chunk.get_string(name).to_string()
+        let name = c.as_str();
+        name.to_string()
     }
 
     fn print_value(&self, v: Value) {
-        match v {
-            Value::Obj(ObjString(str)) => {
-                println(self.chunk.get_string(&str).to_string());
-            }
-            _ => {
-                println(format!("{}", v))
-            }
-        }
+        println(format!("{}", v))
     }
+
 }
 
 

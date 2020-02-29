@@ -1,26 +1,22 @@
 use std::fmt::{Display, Formatter};
+use Value::*;
+use std::ops::{Neg, Add, Sub, Mul, Div};
+use std::cmp::Ordering;
+
+use crate::bytecode::string_table::InternString;
+use crate::bytecode::chunk::Chunk;
+use crate::bytecode::memory::Object;
+use crate::bytecode::memory::Obj::ObjString;
+use std::ptr::NonNull;
 
 #[derive(PartialEq, Clone)]
 pub enum Value {
     Number(f64),
     Bool(bool),
-    Obj(Obj),
+    Obj(NonNull<Object>),
     Nil
 }
 
-#[derive(Clone, PartialEq)]
-pub enum Obj {
-    ObjString(InternString),
-}
-
-
-
-use Value::*;
-use std::ops::{Neg, Add, Sub, Mul, Div};
-use std::cmp::Ordering;
-use crate::bytecode::value::Obj::ObjString;
-use crate::bytecode::string_table::InternString;
-use crate::bytecode::chunk::Chunk;
 
 
 impl Value {
@@ -40,17 +36,17 @@ impl Value {
     }
     pub(crate) fn is_string(&self) -> bool {
         if let Value::Obj(obj) = self {
-            if let Obj::ObjString(_) = obj {
-                return true
+            return unsafe {
+                obj.as_ref().is_string()
             }
         }
         false
     }
 
-    pub(crate) fn as_string(&self) -> &InternString {
+    pub(crate) fn as_str(&self) -> &str {
         if let Value::Obj(obj) = self {
-            if let Obj::ObjString(s) = obj {
-                return s
+            return unsafe {
+                obj.as_ref().as_str()
             }
         }
         panic!("not a string")
@@ -98,12 +94,11 @@ impl From<f64> for Value {
     }
 }
 
-impl From<InternString> for Value {
-    fn from(is: InternString) -> Self {
-        Value::Obj(ObjString(is))
+impl  From<NonNull<Object>> for Value {
+    fn from(o: NonNull<Object>) -> Self {
+        Value::Obj(o)
     }
 }
-
 
 impl Display for Value {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -111,10 +106,10 @@ impl Display for Value {
             Number(v) => write!(f, "{}", v),
             Bool(b) => write!(f, "{}", b),
             Nil => write!(f, "nil"),
-            Obj(obj) => {
-                match obj {
-                    Obj::ObjString(InternString(id)) => {
-                        write!(f, "<str {}>", id)
+            Obj(obj) => unsafe {
+                match obj.as_ref().obj {
+                    ObjString(_) => {
+                        write!(f, "{}", obj.as_ref().as_str())
                     }
                     _ => {
                         write!(f, "<obj>")

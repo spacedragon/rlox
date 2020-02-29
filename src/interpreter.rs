@@ -148,7 +148,7 @@ impl <O: Output> StmtVisitor for Interpreter<O> {
     fn visit_print_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err> {
         if let Stmt::PrintStmt(expr) = stmt {
             let value = self.evaluate(expr)?;
-            self.output.write_string(format!("{}", value));
+            self.output.write_string(format!("{}\n", value));
             return Ok(());
         }
         unreachable!()

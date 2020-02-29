@@ -7,6 +7,14 @@ use crate::bytecode::OpCode::*;
 use std::mem;
 use crate::bytecode::value::Value;
 
+use Precedence::*;
+use crate::bytecode::OpCode;
+use num_enum::{IntoPrimitive, TryFromPrimitive};
+use std::convert::TryFrom;
+use crate::bytecode::vm::VM;
+use crate::bytecode::memory::{Allocator, ALLOCATOR};
+
+
 struct Local {
     name: Token,
     depth: i32
@@ -20,7 +28,7 @@ pub struct Compiler {
     had_error: bool,
     panic_mode: bool,
     scope_depth: usize,
-    locals: Vec<Local>
+    locals: Vec<Local>,
 }
 
 impl Compiler {
@@ -33,7 +41,7 @@ impl Compiler {
             had_error: false,
             panic_mode: false,
             scope_depth: 0,
-            locals: Vec::with_capacity(std::u8::MAX as usize)
+            locals: Vec::with_capacity(std::u8::MAX as usize),
         }
     }
 
@@ -147,20 +155,22 @@ impl Compiler {
 
     fn parse_var(&mut self, err: &str) -> u8 {
         self.consume(IDENTIFIER, err);
-        let token = &self.previous;
-        let name =self.scanner.get_identifier(token);
+        let token = self.previous.clone();
 
         self.declare_var();
         if self.scope_depth > 0 {
             return 0;
         }
 
-        self.identifier_constant(name)
+        self.identifier_constant(&token)
     }
 
-    fn identifier_constant(&mut self, name: String) ->u8 {
-        let v: Value = self.current_chunk().make_string(name).into();
-        self.make_constant(v)
+    fn identifier_constant(&mut self, name: &Token) ->u8 {
+        ALLOCATOR.with( |a| {
+            let chars = self.scanner.get_chars(name);
+            let v: Value = a.borrow_mut().allocate_string(chars).into();
+            self.make_constant(v)
+        })
     }
 
     fn make_constant(&mut self, v: Value) -> u8 {
@@ -543,10 +553,12 @@ impl Compiler {
     }
 
     fn string(&mut self, _can_assign: bool) {
-        let s = self.scanner.get_string(&self.previous);
-        let intern_id = self.current_chunk().make_string(s);
-        let value = intern_id.into();
-        self.emit_constant(value)
+        ALLOCATOR.with(|a| {
+            let s = self.scanner.get_chars(&self.previous);
+            let value = a.borrow_mut().allocate_string(s).into();
+            self.emit_constant(value)
+        });
+
     }
 
     fn variable(&mut self, can_assign: bool) {
@@ -563,7 +575,6 @@ impl Compiler {
             set = OpSetLocal;
             arg = i;
         } else {
-            let name = self.scanner.get_identifier(name);
             arg = self.identifier_constant(name);
             set = OpSetGlobal;
             get = OpGetGlobal;
@@ -618,11 +629,6 @@ fn get_rule(token_type: TokenType) -> &'static ParseRule {
     &RULES[idx as usize]
 }
 
-use Precedence::*;
-use crate::bytecode::OpCode;
-use num_enum::{IntoPrimitive, TryFromPrimitive};
-use std::convert::TryFrom;
-
 
 
 #[allow(non_camel_case_types)]
@@ -651,7 +657,7 @@ enum Precedence {
     PREC_PRIMARY,
 }
 
-type ParseFn = fn(&mut Compiler, bool) -> ();
+type ParseFn= fn(&mut Compiler, bool) -> ();
 
 struct ParseRule {
     prefix: Option<ParseFn>,

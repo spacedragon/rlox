@@ -293,11 +293,10 @@ impl Scanner {
         }
     }
 
-    pub fn get_identifier(&self, token: &Token) -> String {
+    pub fn get_identifier(&self, token: &Token) -> &[char] {
         let Pos { start, len, ..} = &token.pos;
         let chars = &self.source[(*start)..(start+len)];
-        let result: String = chars.iter().collect();
-        result
+        chars
     }
 
     pub fn identifier_eq(&self, a: &Token, b: &Token) -> bool {
@@ -306,11 +305,13 @@ impl Scanner {
         return self.source[a_range] == self.source[b_range]
     }
 
-    pub fn get_string(&self, token: &Token) -> String {
+    pub fn get_chars(&self, token: &Token) -> &[char] {
         let Pos { start, len, ..} = &token.pos;
-        let chars = &self.source[(start+1)..(start+len -1)];
-        let result: String = chars.iter().collect();
-        result
+        &self.source[(start+1)..(start+len -1)]
+    }
+
+    pub fn get_string(&self, token: &Token) -> String {
+         self.get_chars(token).iter().collect()
     }
 
     pub fn get_number(&self, token: &Token) -> f64 {

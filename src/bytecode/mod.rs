@@ -1,5 +1,6 @@
 mod debug;
 mod value;
+mod memory;
 pub(crate) mod scanner;
 pub mod chunk;
 pub mod vm;

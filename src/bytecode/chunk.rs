@@ -68,9 +68,6 @@ impl Chunk {
         self.lines[offset]
     }
 
-    pub fn make_string(&mut self, s: String) -> InternString {
-        self.strings.get_or_intern(&s)
-    }
     pub fn get_string(&self, id: &InternString) -> &str {
         self.strings.resolve(id)
     }
