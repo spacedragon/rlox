@@ -106,6 +106,12 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> usize {
             OpDefineGlobal => constant_instruction("OP_DEFINE_GLOBAL", chunk, offset),
             OpGetGlobal => constant_instruction("OP_GET_GLOBAL", chunk, offset),
             OpSetGlobal => constant_instruction("OP_SET_GLOBAL", chunk, offset),
+            OpPopN => byte_instruction("OP_POPN", chunk,offset) ,
+            OpGetLocal => byte_instruction("OP_GET_LOCAL", chunk,offset),
+            OpSetLocal => byte_instruction("OP_SET_LOCAL", chunk,offset),
+            OpJump => jump_instruction("OP_JUMP", 1, chunk, offset),
+            OpJumpIfFalse => jump_instruction("OP_JUMP_IF_FALSE", 1, chunk, offset),
+            OpLoop => jump_instruction("OP_LOOP", -1, chunk, offset),
         }
     } else {
         stderr(format!("Unknown opcode {}\n", instruction));
@@ -115,21 +121,32 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> usize {
 
 
 fn simple_instruction(name: &str, offset: usize) -> usize {
-    stderr(format!("{}\n", name));
-
+    stderr(format!("{:16}:\n", name));
     offset + 1
 }
 
+fn jump_instruction(name: &str,sign: i32, chunk: &Chunk, offset: usize) -> usize {
+    let jump = u16::from_le_bytes([chunk[offset+1],chunk[offset+2]]);
+    let j: i32 = offset as i32 + 3 + sign * (jump as i32);
+    stderr(format!("{:16} {:4} -> {}:\n", name, offset, j));
+    offset + 3
+}
+
+fn byte_instruction(name: &str, chunk: &Chunk, offset: usize) -> usize {
+    let slot = chunk[offset + 1];
+    stderr(format!("{:16}: {:04} \n", name, slot));
+    offset + 2
+}
 fn constant_instruction(name: &str, chunk: &Chunk, offset: usize) -> usize {
     let constant = chunk[offset + 1];
-    stderr(format!("{} {:04} '{}'\n", name, constant,
+    stderr(format!("{:16}: {:04} '{}'\n", name, constant,
                    chunk.constant(constant as usize)));
     offset + 2
 }
 
 fn constant_instruction_long(name: &str, chunk: &Chunk, offset: usize) -> usize {
     let constant = u16::from_be_bytes([chunk[offset + 1], chunk[offset + 2]]);
-    stderr(format!("{} {:04} '{}'\n", name, constant,
+    stderr(format!("{:16}: {:04} '{}'\n", name, constant,
                     chunk.constant(constant as usize)));
 
     offset + 3

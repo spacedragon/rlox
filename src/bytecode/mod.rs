@@ -27,9 +27,15 @@ pub enum OpCode {
     OpLess,
     OpPrint,
     OpPop,
+    OpPopN,
     OpGetGlobal,
     OpSetGlobal,
-    OpDefineGlobal
+    OpDefineGlobal,
+    OpGetLocal,
+    OpSetLocal,
+    OpJump,
+    OpJumpIfFalse,
+    OpLoop
 }
 
 
@@ -57,8 +63,8 @@ mod test {
         disassemble_chunk(&chunk, "test");
 
         assert_eq!(stderr_string(), r#"==test chunk==
-0000  123 OP_CONSTANT 0000 '1.2'
-0002    | OP_RETURN
+0000  123 OP_CONSTANT     : 0000 '1.2'
+0002    | OP_RETURN       :
 "#);
     }
 
@@ -73,21 +79,26 @@ mod test {
         let mut vm = VM::new(chunk);
         vm.interpret();
         assert_eq!(stderr_string(), r#"stack []
-0000  123 OP_CONSTANT 0000 '1.2'
+0000  123 OP_CONSTANT     : 0000 '1.2'
 stack [1.2,]
-0002    | OP_NEGATE
+0002    | OP_NEGATE       :
 stack [-1.2,]
-0003    | OP_RETURN
+0003    | OP_RETURN       :
 "#);
     }
 
-    fn eval(source: &str) -> Result<(), LoxError> {
-        let scanner = Scanner::new(&source);
-        let compiler = Compiler::new(scanner);
-        let chunk = compiler.compile()?;
-        let mut vm: VM = VM::new(chunk);
-        vm.interpret();
-        Ok(())
+    fn eval(source: &str) {
+        let result = std::panic::catch_unwind(|| {
+            let scanner = Scanner::new(&source);
+            let compiler = Compiler::new(scanner);
+            let chunk = compiler.compile().unwrap();
+            let mut vm: VM = VM::new(chunk);
+            vm.interpret();
+        });
+        if result.is_err() {
+            println!("{}", stderr_string())
+        }
+        assert!(result.is_ok())
     }
 
     #[test]
@@ -105,7 +116,7 @@ stack [-1.2,]
     #[test]
     fn test_expression() -> Result<(), LoxError> {
 
-        eval(r#"print !(5 - 4 > 3 * 2 == !nil);"#)?;
+        eval(r#"print !(5 - 4 > 3 * 2 == !nil);"#);
         assert_eq!("true\n", stdout_string());
         Ok(())
     }
@@ -113,7 +124,7 @@ stack [-1.2,]
     #[test]
     fn test_str() -> Result<(), LoxError> {
 
-        eval(r#"print "a" + "b"; "#)?;
+        eval(r#"print "a" + "b"; "#);
         assert_eq!(stdout_string(), "ab\n");
         Ok(())
     }
@@ -124,8 +135,21 @@ stack [-1.2,]
         var breakfast = "beignets";
         breakfast = "beignets with " + beverage;
         print breakfast;
-        "#)?;
+        "#);
         assert_eq!(stdout_string(), "beignets with cafe au lait\n");
+        Ok(())
+    }
+
+    #[test]
+    fn test_loop() -> Result<(), LoxError> {
+        eval(r#"
+        var sum = 0;
+        for (var i=0; i < 10 ; i = i + 1) {
+            sum = sum + i;
+        }
+        print sum;
+        "#);
+        assert_eq!(stdout_string(), "45\n");
         Ok(())
     }
 }

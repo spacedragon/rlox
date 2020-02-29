@@ -300,6 +300,12 @@ impl Scanner {
         result
     }
 
+    pub fn identifier_eq(&self, a: &Token, b: &Token) -> bool {
+        let a_range = a.pos.start..(a.pos.start+a.pos.len) ;
+        let b_range = b.pos.start..(b.pos.start+b.pos.len) ;
+        return self.source[a_range] == self.source[b_range]
+    }
+
     pub fn get_string(&self, token: &Token) -> String {
         let Pos { start, len, ..} = &token.pos;
         let chars = &self.source[(start+1)..(start+len -1)];

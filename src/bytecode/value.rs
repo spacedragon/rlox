@@ -10,7 +10,7 @@ pub enum Value {
 
 #[derive(Clone, PartialEq)]
 pub enum Obj {
-    ObjString(InternString)
+    ObjString(InternString),
 }
 
 
@@ -20,6 +20,7 @@ use std::ops::{Neg, Add, Sub, Mul, Div};
 use std::cmp::Ordering;
 use crate::bytecode::value::Obj::ObjString;
 use crate::bytecode::string_table::InternString;
+use crate::bytecode::chunk::Chunk;
 
 
 impl Value {
@@ -33,7 +34,7 @@ impl Value {
     pub(crate) fn is_false(&self) -> bool {
         match self {
             Nil => true,
-            Bool(v) => !*v,
+            Bool(v) => *v == false,
             _ => false
         }
     }

@@ -7,6 +7,11 @@ use crate::bytecode::OpCode::*;
 use std::mem;
 use crate::bytecode::value::Value;
 
+struct Local {
+    name: Token,
+    depth: i32
+}
+
 pub struct Compiler {
     scanner: Scanner,
     chunk: Chunk,
@@ -14,6 +19,8 @@ pub struct Compiler {
     current: Token,
     had_error: bool,
     panic_mode: bool,
+    scope_depth: usize,
+    locals: Vec<Local>
 }
 
 impl Compiler {
@@ -25,6 +32,8 @@ impl Compiler {
             current: Default::default(),
             had_error: false,
             panic_mode: false,
+            scope_depth: 0,
+            locals: Vec::with_capacity(std::u8::MAX as usize)
         }
     }
 
@@ -32,8 +41,14 @@ impl Compiler {
         &mut self.chunk
     }
 
+    fn init_compiler(&mut self) {
+        self.locals.clear();
+        self.scope_depth = 0;
+    }
+
     pub fn compile(mut self) -> Result<Chunk, LoxError> {
         self.scanner.init();
+        self.init_compiler();
 
         self.had_error = false;
         self.panic_mode = false;
@@ -47,6 +62,14 @@ impl Compiler {
 
         self.end_compiler();
         Ok(self.chunk)
+    }
+
+    fn end_compiler(&mut self) {
+        self.emit_return();
+        if !self.had_error {
+            #[cfg(debug_assertions)]
+                disassemble_chunk(&self.current_chunk(), "code")
+        }
     }
 
     fn declaration(&mut self) {
@@ -76,13 +99,62 @@ impl Compiler {
     }
 
     fn define_var(&mut self, global: u8) {
+        if self.scope_depth > 0 {
+            self.mark_initialized();
+            return;
+        }
         self.emit_bytes(OpDefineGlobal.into(), global);
+    }
+
+    fn mark_initialized(&mut self) {
+        if let Some(f) = self.locals.last_mut() {
+            f.depth = self.scope_depth as i32;
+        }
+    }
+
+    fn declare_var(&mut self) {
+        if self.scope_depth == 0 {
+            return;
+        }
+        let name = (&self.previous).clone();
+        let name_conflicts = self.locals.iter().any(|local| {
+            if (local.depth != -1) && (local.depth < self.scope_depth as i32) {
+                false
+            } else {
+                self.scanner.identifier_eq(&local.name, &name)
+            }
+        });
+
+        if name_conflicts {
+            self.error_at_current("Variable with this name already declared in this scope.")
+        } else {
+            self.add_local(name);
+        }
+    }
+
+    fn add_local(&mut self, name: Token) {
+        if self.locals.len() >= std::u8::MAX as usize {
+            self.error_at_current("Too many local variables in function.");
+            return;
+        }
+
+        let local = Local {
+            name,
+            depth: -1
+        };
+        self.locals.push(local)
     }
 
     fn parse_var(&mut self, err: &str) -> u8 {
         self.consume(IDENTIFIER, err);
         let token = &self.previous;
         let name =self.scanner.get_identifier(token);
+
+        self.declare_var();
+        if self.scope_depth > 0 {
+            return 0;
+        }
+
         self.identifier_constant(name)
     }
 
@@ -120,9 +192,155 @@ impl Compiler {
     fn statement(&mut self) {
         if self.matches(PRINT) {
             self.print_statement();
+        } else if self.matches(FOR) {
+            self.for_statement();
+        } else if self.matches(IF) {
+            self.if_statement()
+        } else if self.matches(WHILE) {
+            self.while_statement();
+        } else if self.matches(LEFT_BRACE) {
+            self.begin_scope();
+            self.block();
+            self.end_scope();
         } else {
             self.expression_statement();
         }
+    }
+
+    fn while_statement(&mut self) {
+        let loop_start = self.chunk.len();
+        self.consume(LEFT_PAREN, "Expect '(' after 'while'.");
+        self.expression();
+        self.consume(RIGHT_PAREN, "Expect ')' after condition.");
+        let exit_jump = self.emit_jump(OpJumpIfFalse);
+
+        self.emit_op(OpPop);
+        self.statement();
+
+        self.emit_loop(loop_start);
+        self.patch_jump(exit_jump);
+        self.emit_op(OpPop);
+    }
+
+    fn emit_loop(&mut self, start: usize) {
+        self.emit_op(OpLoop);
+
+        let offset = self.chunk.len() - start + 2;
+        if offset > (std::u16::MAX as usize) {
+            self.error("Loop body too large.")
+        }
+
+        let [hi, lo] = (offset as u16).to_le_bytes();
+
+        self.emit_bytes(hi, lo);
+    }
+
+    fn for_statement(&mut self) {
+        self.begin_scope();
+        self.consume(LEFT_PAREN, "Expect '(' after 'for'");
+        // initializer
+        if self.matches(SEMICOLON) {
+            // No initializer.
+        } else if self.matches(VAR) {
+            self.var_declaration();
+        } else {
+            self.expression_statement()
+        }
+
+        let mut loop_start = self.chunk.len();
+        // condition expression
+        let mut exit_jump = None;
+        if !self.matches(SEMICOLON) {
+            self.expression();
+            self.consume(SEMICOLON, "Expect ';' after loop condition.");
+
+            exit_jump = Some(self.emit_jump(OpJumpIfFalse));
+            self.emit_op(OpPop);
+        }
+
+        //increment
+        if !self.matches(RIGHT_PAREN) {
+            let body_jump = self.emit_jump(OpJump);
+            let increment_start = self.chunk.len();
+            self.expression();
+            self.emit_op(OpPop);
+            self.consume(RIGHT_PAREN, "Expect ')' after for clauses.");
+
+            self.emit_loop(loop_start);
+            loop_start = increment_start;
+            self.patch_jump(body_jump);
+        }
+
+        self.statement();
+
+        self.emit_loop(loop_start);
+
+        if let Some(exit) = exit_jump {
+            self.patch_jump(exit);
+            self.emit_op(OpPop);
+        }
+
+        self.end_scope();
+    }
+
+    fn if_statement(&mut self) {
+        self.consume(LEFT_PAREN, "Expect '(' after 'if'.");
+        self.expression();
+        self.consume(RIGHT_PAREN, "Expect ')' after condition.");
+
+        let then_jump = self.emit_jump(OpJumpIfFalse);
+        self.emit_op(OpPop);
+        self.statement();
+
+        let else_jump = self.emit_jump(OpJump);
+
+        self.patch_jump(then_jump);
+        self.emit_op(OpPop);
+
+        if self.matches(ELSE) {
+            self.statement();
+        }
+        self.patch_jump(else_jump);
+    }
+
+    fn emit_jump(&mut self, instruction: OpCode) -> usize {
+        self.emit_op(instruction);
+        self.emit_bytes(0xff, 0xff);
+        self.chunk.len() - 2
+    }
+
+    fn patch_jump(&mut self, offset: usize) {
+        let jump = (self.chunk.len() - offset - 2) ;
+        if jump > (std::u16::MAX as usize) {
+            self.error("Too much code to jump over.");
+        }
+
+        let jump = jump as u16;
+        let [hi, lo] = jump.to_le_bytes();
+        self.chunk[offset] = hi;
+        self.chunk[offset + 1] = lo;
+    }
+
+    fn block(&mut self) {
+        while !self.check(RIGHT_BRACE) && !self.check(EOF) {
+            self.declaration();
+        }
+        self.consume(RIGHT_BRACE, "Expect '}' after block.");
+    }
+
+    fn begin_scope(&mut self) {
+        self.scope_depth +=1;
+    }
+
+    fn end_scope(&mut self) {
+        self.scope_depth -=1;
+        let mut n = 0;
+        while !self.locals.is_empty() &&
+            self.locals.last().unwrap().depth > (self.scope_depth as i32) {
+            self.locals.pop();
+            n+=1;
+        }
+        self.emit_bytes(OpPopN.into(), n);
     }
 
     fn expression_statement(&mut self) {
@@ -160,13 +378,17 @@ impl Compiler {
                     return;
                 }
                 Err(e) => {
-                    self.error_at(e.into())
+                    self.error(format!("{}", e).as_str())
                 }
             }
         }
     }
     fn error_at_current(&mut self, e: &str) {
-        let token = &self.current;
+        let token = self.current.clone();
+        self.error_at(&token, e);
+    }
+
+    fn error_at(&mut self, token: &Token, e: &str) {
         if self.panic_mode {
             return;
         }
@@ -180,13 +402,14 @@ impl Compiler {
                 print_err(format!(" at '{}.{}'", token.pos.len, token.pos.start));
             }
         }
-        print_err(e.to_string());
+        print_err(format!("{}\n", e));
 
         self.had_error = true;
     }
 
-    fn error_at(&mut self, e: LoxError) {
-        self.error_at_current(format!("{}", e).as_str());
+    fn error(&mut self, e: &str) {
+        let token = self.previous.clone();
+        self.error_at(&token, e)
     }
 
     fn emit_op(&mut self, op: OpCode) {
@@ -203,13 +426,7 @@ impl Compiler {
         self.emit_byte(byte2);
     }
 
-    fn end_compiler(&mut self) {
-        self.emit_return();
-        if !self.had_error {
-            #[cfg(debug_assertions)]
-                disassemble_chunk(&self.current_chunk(), "code")
-        }
-    }
+
 
     fn number(&mut self, _can_assign: bool) {
         if self.previous.t == NUMBER {
@@ -333,20 +550,67 @@ impl Compiler {
     }
 
     fn variable(&mut self, can_assign: bool) {
-        let name = self.scanner.get_identifier(&self.previous);
-        self.named_var(name, can_assign)
+        let name = (&self.previous).clone();
+        self.named_var(&name, can_assign)
     }
 
-    fn named_var(&mut self, name: String, can_assign: bool) {
-        let arg = self.identifier_constant(name);
+    fn named_var(& mut self, name: &Token, can_assign: bool) {
+        let get: OpCode;
+        let set: OpCode;
+        let arg: u8;
+        if let Some(i) = self.resolve_local(name) {
+            get = OpGetLocal;
+            set = OpSetLocal;
+            arg = i;
+        } else {
+            let name = self.scanner.get_identifier(name);
+            arg = self.identifier_constant(name);
+            set = OpSetGlobal;
+            get = OpGetGlobal;
+        }
 
         if can_assign && self.matches(EQUAL) {
             self.expression();
-            self.emit_bytes(OpSetGlobal.into(), arg);
+            self.emit_bytes(set.into(), arg);
         } else {
-            self.emit_bytes(OpGetGlobal.into(), arg);
+            self.emit_bytes(get.into(), arg);
         }
     }
+
+    fn resolve_local(&mut self, name: &Token) -> Option<u8> {
+        for i in (0..self.locals.len()).rev() {
+            let local = &self.locals[i];
+            if self.scanner.identifier_eq(&local.name, name) {
+                if local.depth == -1 {
+                    self.error_at_current("Cannot read local variable in its own initializer.")
+                }
+                return Some(i as u8)
+            }
+        }
+        None
+    }
+
+    fn and_(&mut self, _can_assign: bool) {
+        let end_jump = self.emit_jump(OpJumpIfFalse);
+
+        self.emit_op(OpPop);
+        self.parse_precedence(PREC_AND);
+
+        self.patch_jump(end_jump);
+    }
+
+    fn or_(&mut self, _can_assign: bool) {
+        let else_jump = self.emit_jump(OpJumpIfFalse);
+        let end_jump = self.emit_jump(OpJump);
+
+        self.patch_jump(else_jump);
+        self.emit_op(OpPop);
+
+        self.parse_precedence(PREC_OR);
+
+        self.patch_jump(end_jump);
+    }
+
 }
 
 fn get_rule(token_type: TokenType) -> &'static ParseRule {
@@ -358,6 +622,7 @@ use Precedence::*;
 use crate::bytecode::OpCode;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 use std::convert::TryFrom;
+
 
 
 #[allow(non_camel_case_types)]
@@ -428,7 +693,7 @@ static RULES: [ParseRule; 40] = [
     rule! { variable,  None,  PREC_NONE },       // TOKEN_IDENTIFIER
     rule! { string,  None,  PREC_NONE },       // TOKEN_STRING
     rule! { number,  None,  PREC_NONE },       // TOKEN_NUMBER
-    rule! { None,  None,  PREC_NONE },       // TOKEN_AND
+    rule! { None,  and_,  PREC_AND },       // TOKEN_AND
     rule! { None,  None,  PREC_NONE },       // TOKEN_CLASS
     rule! { None,  None,  PREC_NONE },       // TOKEN_ELSE
     rule! { literal,  None,  PREC_NONE },       // TOKEN_FALSE
@@ -436,7 +701,7 @@ static RULES: [ParseRule; 40] = [
     rule! { None,  None,  PREC_NONE },       // TOKEN_FUN
     rule! { None,  None,  PREC_NONE },       // TOKEN_IF
     rule! { literal,  None,  PREC_NONE },       // TOKEN_NIL
-    rule! { None,  None,  PREC_NONE },       // TOKEN_OR
+    rule! { None,  or_,  PREC_OR },       // TOKEN_OR
     rule! { None,  None,  PREC_NONE },       // TOKEN_PRINT
     rule! { None,  None,  PREC_NONE },       // TOKEN_RETURN
     rule! { None,  None,  PREC_NONE },       // TOKEN_SUPER

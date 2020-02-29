@@ -1,5 +1,5 @@
 
-use std::ops::Index;
+use std::ops::{Index, IndexMut};
 use super::value::Value;
 use super::OpCode;
 use crate::bytecode::OpCode::{OpConstant, OpConstantLong};
@@ -54,7 +54,7 @@ impl Chunk {
             self.write_chunk(idx as u8, line);
         } else {
             self.write_op(OpConstantLong, line);
-            let [h, l] = (idx as u16).to_be_bytes();
+            let [h, l] = (idx as u16).to_le_bytes();
             self.write_chunk(h, line);
             self.write_chunk(l, line);
         }
@@ -81,5 +81,11 @@ impl Index<usize> for Chunk {
 
     fn index(&self, index: usize) -> &Self::Output {
         unsafe  { self.code.get_unchecked(index) }
+    }
+}
+
+impl IndexMut<usize> for Chunk {
+    fn index_mut(&mut self, idx: usize) -> &mut Self::Output {
+        unsafe  { self.code.get_unchecked_mut(idx) }
     }
 }

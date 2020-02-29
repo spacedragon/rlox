@@ -80,7 +80,7 @@ impl VM {
     }
 
     fn read_u16(&mut self) -> u16 {
-        let v = u16::from_be_bytes([self.chunk[self.ip], self.chunk[self.ip + 1]]);
+        let v = u16::from_le_bytes([self.chunk[self.ip], self.chunk[self.ip + 1]]);
         self.ip += 2;
         v
     }
@@ -170,6 +170,10 @@ impl VM {
                         self.print_value(v);
                     }
                     OpPop => { self.pop(); }
+                    OpPopN => {
+                        let n =self.read_byte() as usize;
+                        self.stack.truncate(self.stack.len() - n);
+                    }
                     OpDefineGlobal => {
                         let name = self.read_string();
                         let v = self.pop();
@@ -192,10 +196,33 @@ impl VM {
                             return Err(UndefinedVar(name));
                         }
                     }
+                    OpGetLocal => {
+                        let slot = self.read_byte() as usize;
+                        self.push(self.stack[slot].clone());
+                    }
+                    OpSetLocal => {
+                        let slot = self.read_byte() as usize;
+                        self.stack[slot] = self.peek(0).clone();
+                    }
+                    OpJumpIfFalse => {
+                        let offset = self.read_u16();
+                        if self.peek(0).is_false() {
+                            self.ip += offset as usize;
+                        }
+                    }
+                    OpJump => {
+                        let offset = self.read_u16();
+                        self.ip += offset as usize;
+                    }
+                    OpLoop => {
+                        let offset = self.read_u16();
+                        self.ip -= offset as usize;
+                    }
                 }
             } else {}
         }
     }
+
 
 
     fn read_string(&mut self) -> String {
