@@ -3,14 +3,12 @@ use std::ops::{Index, IndexMut};
 use super::value::Value;
 use super::OpCode;
 use crate::bytecode::OpCode::{OpConstant, OpConstantLong};
-use crate::bytecode::string_table::{StringTable, InternString};
 
 
 pub struct Chunk {
     code: Vec<u8>,
     constants: Vec<Value>,
     lines: Vec<i32>,
-    strings: StringTable,
 }
 
 
@@ -20,7 +18,6 @@ impl Chunk {
             code: Vec::new(),
             constants:Vec::new(),
             lines: Vec::new(),
-            strings: StringTable::new()
         }
     }
 
@@ -68,9 +65,6 @@ impl Chunk {
         self.lines[offset]
     }
 
-    pub fn get_string(&self, id: &InternString) -> &str {
-        self.strings.resolve(id)
-    }
 }
 
 impl Index<usize> for Chunk {

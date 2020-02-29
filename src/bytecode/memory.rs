@@ -110,7 +110,7 @@ mod test {
     fn test_free() {
         let mut aa = Allocator::new();
         let chars: Vec<char> = "ccc".chars().collect();
-        let object = aa.allocate_string(&chars);
+        let _object = aa.allocate_string(&chars);
         aa.free_objects();
         assert!(aa.strings.is_empty());
         assert!(aa.objects.is_null());

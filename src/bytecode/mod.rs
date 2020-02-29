@@ -5,7 +5,6 @@ pub(crate) mod scanner;
 pub mod chunk;
 pub mod vm;
 pub mod compiler;
-mod string_table;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 
 #[repr(u8)]

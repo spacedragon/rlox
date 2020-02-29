@@ -11,8 +11,7 @@ use Precedence::*;
 use crate::bytecode::OpCode;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 use std::convert::TryFrom;
-use crate::bytecode::vm::VM;
-use crate::bytecode::memory::{Allocator, ALLOCATOR};
+use crate::bytecode::memory::ALLOCATOR;
 
 
 struct Local {
@@ -320,8 +319,8 @@ impl Compiler {
     }
 
     fn patch_jump(&mut self, offset: usize) {
-        let jump = (self.chunk.len() - offset - 2) ;
-        if jump > (std::u16::MAX as usize) {
+        let jump = self.chunk.len() - offset - 2 ;
+        if jump > std::u16::MAX as usize {
             self.error("Too much code to jump over.");
         }
 

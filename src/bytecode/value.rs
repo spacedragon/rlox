@@ -3,8 +3,6 @@ use Value::*;
 use std::ops::{Neg, Add, Sub, Mul, Div};
 use std::cmp::Ordering;
 
-use crate::bytecode::string_table::InternString;
-use crate::bytecode::chunk::Chunk;
 use crate::bytecode::memory::Object;
 use crate::bytecode::memory::Obj::ObjString;
 use std::ptr::NonNull;

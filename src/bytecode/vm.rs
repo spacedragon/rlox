@@ -25,7 +25,7 @@ use super::value::Value;
 use crate::bytecode::debug::{print_err, disassemble_instruction, println};
 use crate::error::RuntimeError::*;
 use std::collections::HashMap;
-use crate::bytecode::memory::{Allocator, Obj};
+use crate::bytecode::memory::Allocator;
 
 const STACK_MAX: usize = 256;
 

@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+#![allow(unreachable_patterns)]
 
 use structopt::StructOpt;
 use log::{info};
