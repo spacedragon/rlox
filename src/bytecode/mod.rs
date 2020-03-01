@@ -1,6 +1,7 @@
 mod debug;
 mod value;
 mod memory;
+mod object;
 pub(crate) mod scanner;
 pub mod chunk;
 pub mod vm;
@@ -44,7 +45,6 @@ mod test {
     use super::*;
     use super::value::Value;
     use super::chunk::Chunk;
-    use OpCode::*;
     use crate::bytecode::vm::VM;
     use super::debug::output::{stderr_string, stdout_string};
     use crate::bytecode::debug::disassemble_chunk;
@@ -68,32 +68,11 @@ mod test {
 "#);
     }
 
-    #[test]
-    fn test_simple() {
-        let mut chunk = Chunk::new();
-
-        chunk.write_constant(Value::Number(1.2), 123);
-        chunk.write_op(OpNegate, 123);
-        chunk.write_op(OpReturn, 123);
-
-        let mut vm = VM::new(chunk);
-        vm.interpret();
-        assert_eq!(stderr_string(), r#"stack []
-0000  123 OP_CONSTANT     : 0000 '1.2'
-stack [1.2,]
-0002    | OP_NEGATE       :
-stack [-1.2,]
-0003    | OP_RETURN       :
-"#);
-    }
 
     fn eval(source: &str) {
         let result = std::panic::catch_unwind(|| {
-            let scanner = Scanner::new(&source);
-            let compiler = Compiler::new(scanner);
-            let chunk = compiler.compile().unwrap();
-            let mut vm: VM = VM::new(chunk);
-            vm.interpret();
+            let mut vm: VM = VM::new();
+            vm.interpret(source);
         });
         if result.is_err() {
             println!("{}", stderr_string())
@@ -104,11 +83,7 @@ stack [-1.2,]
     #[test]
     fn test_compile() -> Result<(), LoxError> {
         let source = r#"print (-1 + 2) * 3 - -4;"#;
-        let scanner = Scanner::new(&source);
-        let compiler = Compiler::new(scanner);
-        let chunk = compiler.compile()?;
-        let mut vm: VM = VM::new(chunk);
-        vm.interpret();
+        eval(source);
         assert_eq!(stdout_string(), "7\n");
         Ok(())
     }
@@ -141,11 +116,25 @@ stack [-1.2,]
     }
 
     #[test]
+    fn test_local_var() -> Result<(), LoxError> {
+        eval(r#"
+        {
+            var beverage = "cafe au lait";
+            print beverage;
+        }
+        "#);
+        assert_eq!(stdout_string(), "cafe au lait\n");
+        Ok(())
+    }
+
+    #[test]
     fn test_loop() -> Result<(), LoxError> {
         eval(r#"
         var sum = 0;
-        for (var i=0; i < 10 ; i = i + 1) {
-            sum = sum + i;
+        for (var ii=0;
+          ii < 10 ;
+          ii = ii + 1) {
+            sum = sum + ii;
         }
         print sum;
         "#);

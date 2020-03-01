@@ -12,50 +12,71 @@ use crate::bytecode::OpCode;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 use std::convert::TryFrom;
 use crate::bytecode::memory::ALLOCATOR;
+use crate::error::LoxError::CompileError;
 
 
 struct Local {
     name: Token,
-    depth: i32
+    depth: i32,
 }
 
 pub struct Compiler {
     scanner: Scanner,
-    chunk: Chunk,
     previous: Token,
     current: Token,
     had_error: bool,
     panic_mode: bool,
     scope_depth: usize,
     locals: Vec<Local>,
+    function: Value,
+    function_type: FunctionType
+}
+
+enum FunctionType {
+    Function,
+    Script
 }
 
 impl Compiler {
     pub fn new(scanner: Scanner) -> Self {
         Self {
             scanner,
-            chunk: Chunk::new(),
             previous: Default::default(),
             current: Default::default(),
             had_error: false,
             panic_mode: false,
             scope_depth: 0,
             locals: Vec::with_capacity(std::u8::MAX as usize),
+            function: Value::Nil,
+            function_type: FunctionType::Script
         }
     }
 
     fn current_chunk(&mut self) -> &mut Chunk {
-        &mut self.chunk
+        let f = self.function.as_function();
+        &mut f.chunk
     }
 
-    fn init_compiler(&mut self) {
+    fn init_compiler(&mut self, function_type: FunctionType) {
+
         self.locals.clear();
         self.scope_depth = 0;
+        self.function_type = function_type;
+        let function = ALLOCATOR.with(|a| { a.borrow_mut().new_function() });
+        self.function = Value::Obj(function);
+
+        self.locals.push(Local {
+            depth: 0,
+            name: Token {
+                t: TokenType::IDENTIFIER,
+                pos: Default::default()
+            }
+        })
     }
 
-    pub fn compile(mut self) -> Result<Chunk, LoxError> {
+    pub fn compile(mut self) -> Result<Value, LoxError> {
         self.scanner.init();
-        self.init_compiler();
+        self.init_compiler(FunctionType::Script);
 
         self.had_error = false;
         self.panic_mode = false;
@@ -68,14 +89,23 @@ impl Compiler {
         self.consume(EOF, "Expect end of expression.");
 
         self.end_compiler();
-        Ok(self.chunk)
+        if self.had_error {
+            Err(CompileError)
+        } else {
+            Ok(self.function)
+        }
     }
 
     fn end_compiler(&mut self) {
         self.emit_return();
         if !self.had_error {
             #[cfg(debug_assertions)]
-                disassemble_chunk(&self.current_chunk(), "code")
+            {
+                let function = self.function.as_function();
+                let name = function.name().to_string();
+                let chunk = self.current_chunk();
+                disassemble_chunk(chunk, &name)
+            }
         }
     }
 
@@ -147,7 +177,7 @@ impl Compiler {
 
         let local = Local {
             name,
-            depth: -1
+            depth: -1,
         };
         self.locals.push(local)
     }
@@ -164,8 +194,8 @@ impl Compiler {
         self.identifier_constant(&token)
     }
 
-    fn identifier_constant(&mut self, name: &Token) ->u8 {
-        ALLOCATOR.with( |a| {
+    fn identifier_constant(&mut self, name: &Token) -> u8 {
+        ALLOCATOR.with(|a| {
             let chars = self.scanner.get_chars(name);
             let v: Value = a.borrow_mut().allocate_string(chars).into();
             self.make_constant(v)
@@ -217,7 +247,7 @@ impl Compiler {
     }
 
     fn while_statement(&mut self) {
-        let loop_start = self.chunk.len();
+        let loop_start = self.current_chunk().len();
         self.consume(LEFT_PAREN, "Expect '(' after 'while'.");
         self.expression();
         self.consume(RIGHT_PAREN, "Expect ')' after condition.");
@@ -234,7 +264,7 @@ impl Compiler {
     fn emit_loop(&mut self, start: usize) {
         self.emit_op(OpLoop);
 
-        let offset = self.chunk.len() - start + 2;
+        let offset = self.current_chunk().len() - start + 2;
         if offset > (std::u16::MAX as usize) {
             self.error("Loop body too large.")
         }
@@ -256,7 +286,7 @@ impl Compiler {
             self.expression_statement()
         }
 
-        let mut loop_start = self.chunk.len();
+        let mut loop_start = self.current_chunk().len();
         // condition expression
         let mut exit_jump = None;
         if !self.matches(SEMICOLON) {
@@ -270,7 +300,7 @@ impl Compiler {
         //increment
         if !self.matches(RIGHT_PAREN) {
             let body_jump = self.emit_jump(OpJump);
-            let increment_start = self.chunk.len();
+            let increment_start = self.current_chunk().len();
             self.expression();
             self.emit_op(OpPop);
             self.consume(RIGHT_PAREN, "Expect ')' after for clauses.");
@@ -315,19 +345,20 @@ impl Compiler {
     fn emit_jump(&mut self, instruction: OpCode) -> usize {
         self.emit_op(instruction);
         self.emit_bytes(0xff, 0xff);
-        self.chunk.len() - 2
+        self.current_chunk().len() - 2
     }
 
     fn patch_jump(&mut self, offset: usize) {
-        let jump = self.chunk.len() - offset - 2 ;
+        let jump = self.current_chunk().len() - offset - 2;
         if jump > std::u16::MAX as usize {
             self.error("Too much code to jump over.");
         }
 
         let jump = jump as u16;
         let [hi, lo] = jump.to_le_bytes();
-        self.chunk[offset] = hi;
-        self.chunk[offset + 1] = lo;
+        let chunk = self.current_chunk();
+        chunk[offset] = hi;
+        chunk[offset + 1] = lo;
     }
 
     fn block(&mut self) {
@@ -338,18 +369,22 @@ impl Compiler {
     }
 
     fn begin_scope(&mut self) {
-        self.scope_depth +=1;
+        self.scope_depth += 1;
     }
 
     fn end_scope(&mut self) {
-        self.scope_depth -=1;
+        self.scope_depth -= 1;
         let mut n = 0;
         while !self.locals.is_empty() &&
             self.locals.last().unwrap().depth > (self.scope_depth as i32) {
             self.locals.pop();
-            n+=1;
+            n += 1;
         }
-        self.emit_bytes(OpPopN.into(), n);
+        if n == 1 {
+            self.emit_op(OpPop);
+        } else {
+            self.emit_bytes(OpPopN.into(), n);
+        }
     }
 
     fn expression_statement(&mut self) {
@@ -434,7 +469,6 @@ impl Compiler {
         self.emit_byte(byte1);
         self.emit_byte(byte2);
     }
-
 
 
     fn number(&mut self, _can_assign: bool) {
@@ -557,7 +591,6 @@ impl Compiler {
             let value = a.borrow_mut().allocate_string(s).into();
             self.emit_constant(value)
         });
-
     }
 
     fn variable(&mut self, can_assign: bool) {
@@ -565,7 +598,7 @@ impl Compiler {
         self.named_var(&name, can_assign)
     }
 
-    fn named_var(& mut self, name: &Token, can_assign: bool) {
+    fn named_var(&mut self, name: &Token, can_assign: bool) {
         let get: OpCode;
         let set: OpCode;
         let arg: u8;
@@ -594,7 +627,7 @@ impl Compiler {
                 if local.depth == -1 {
                     self.error_at_current("Cannot read local variable in its own initializer.")
                 }
-                return Some(i as u8)
+                return Some(i as u8);
             }
         }
         None
@@ -620,14 +653,12 @@ impl Compiler {
 
         self.patch_jump(end_jump);
     }
-
 }
 
 fn get_rule(token_type: TokenType) -> &'static ParseRule {
     let idx = token_type as u8;
     &RULES[idx as usize]
 }
-
 
 
 #[allow(non_camel_case_types)]
@@ -656,7 +687,7 @@ enum Precedence {
     PREC_PRIMARY,
 }
 
-type ParseFn= fn(&mut Compiler, bool) -> ();
+type ParseFn = fn(&mut Compiler, bool) -> ();
 
 struct ParseRule {
     prefix: Option<ParseFn>,

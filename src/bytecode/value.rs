@@ -3,8 +3,8 @@ use Value::*;
 use std::ops::{Neg, Add, Sub, Mul, Div};
 use std::cmp::Ordering;
 
-use crate::bytecode::memory::Object;
-use crate::bytecode::memory::Obj::ObjString;
+use crate::bytecode::object::{Object, Function};
+use crate::bytecode::object::Obj::*;
 use std::ptr::NonNull;
 
 #[derive(PartialEq, Clone)]
@@ -50,6 +50,23 @@ impl Value {
         panic!("not a string")
     }
 
+    pub(crate) fn is_function(&self) -> bool {
+        if let Value::Obj(obj) = self {
+            return unsafe {
+                obj.as_ref().is_function()
+            }
+        }
+        false
+    }
+
+    pub(crate) fn as_function(&mut self) -> &mut Function {
+        if let Value::Obj(obj) = self {
+            return unsafe {
+                obj.as_mut().as_function()
+            }
+        }
+        panic!("not a string")
+    }
 }
 
 
@@ -108,6 +125,13 @@ impl Display for Value {
                 match obj.as_ref().obj {
                     ObjString(_) => {
                         write!(f, "{}", obj.as_ref().as_str())
+                    }
+                    ObjFunction(Function{ name, ..}) => {
+                        if name.is_null() {
+                            write!(f, "<script")
+                        } else {
+                            write!(f, "<fn {}>", Value::Obj(NonNull::new_unchecked(name)).as_str())
+                        }
                     }
                     _ => {
                         write!(f, "<obj>")

@@ -72,12 +72,8 @@ fn main() -> Result<(), LoxError>{
         Command::Compile{ files }  => {
             for file in files {
                 let source = fs::read_to_string(file)?;
-                let scanner = CScanner::new(&source);
-
-                let compiler = Compiler::new(scanner);
-                let chunk = compiler.compile()?;
-                let mut vm = VM::new(chunk);
-                vm.interpret();
+                let mut vm = VM::new();
+                vm.interpret(&source);
             }
         }
         Command::Run{ files }  => {

@@ -19,6 +19,7 @@ quick_error!{
         IoError(err: std::io::Error) {
             from()
         }
+        CompileError {}
     }
 }
 

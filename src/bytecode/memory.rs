@@ -1,35 +1,14 @@
 use std::ptr;
 use std::mem;
 use std::collections::HashMap;
-use crate::bytecode::memory::Obj::ObjString;
+use super::object::Obj;
+use Obj::*;
 use std::ptr::NonNull;
 use std::cell::RefCell;
+use super::object::Object;
+use crate::bytecode::chunk::Chunk;
+use crate::bytecode::object::Function;
 
-pub enum Obj {
-    ObjString(*const str)
-}
-
-pub struct Object {
-    pub obj: Obj,
-    next: *mut Object
-}
-
-impl Object {
-    pub fn is_string(&self) -> bool {
-        match self.obj {
-            ObjString(_) => true,
-            _ => false,
-        }
-    }
-    pub fn as_str(&self) -> &str{
-        match self.obj {
-            ObjString(ptr) => unsafe {
-                &*ptr
-            }
-            _ => panic!("not a string!"),
-        }
-    }
-}
 
 pub struct Allocator {
     objects: *mut Object,
@@ -52,7 +31,7 @@ impl Allocator {
         });
         let ptr = Box::into_raw(object);
         self.objects = ptr;
-        NonNull::new(ptr).unwrap()
+        unsafe { NonNull::new_unchecked(ptr) }
     }
 
     pub fn allocate_string(&mut self, chars: &[char]) -> NonNull<Object> {
@@ -78,6 +57,8 @@ impl Allocator {
         self.objects = object;
     }
 
+
+
     pub fn free_object(&mut self, ptr: *mut Object) {
         let object = unsafe { Box::from_raw(ptr)} ;
         match object.obj {
@@ -86,7 +67,25 @@ impl Allocator {
                 self.strings.remove(&string);
                 mem::forget(string);
             },
+            ObjFunction(Function { arity: _, chunk: _ , name: _ }) => {
+                //self.free_object(name);
+            }
         }
+    }
+
+    pub fn new_function(&mut self) -> NonNull<Object> {
+        let function = Function {
+            arity: 0,
+            name: ptr::null_mut(),
+            chunk: Chunk::new(),
+        };
+        self.allocate(ObjFunction(function))
+    }
+}
+
+impl Drop for Allocator {
+    fn drop(&mut self) {
+        self.free_objects();
     }
 }
 
