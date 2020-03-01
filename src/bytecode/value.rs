@@ -3,7 +3,7 @@ use Value::*;
 use std::ops::{Neg, Add, Sub, Mul, Div};
 use std::cmp::Ordering;
 
-use crate::bytecode::object::{Object, Function};
+use crate::bytecode::object::{Object, Function, NativeFn};
 use crate::bytecode::object::Obj::*;
 use std::ptr::NonNull;
 
@@ -67,6 +67,30 @@ impl Value {
         }
         panic!("not a string")
     }
+
+    pub fn is_native(&self) -> bool {
+        if let Value::Obj(obj) = self {
+            return unsafe {
+                if let ObjNative(_) = obj.as_ref().obj {
+                    true
+                } else {
+                    false
+                }
+            }
+        }
+        false
+    }
+
+    pub fn as_native(&self) -> NativeFn {
+        if let Value::Obj(obj) = self {
+            unsafe {
+                if let ObjNative(n) = obj.as_ref().obj {
+                    return n
+                }
+            }
+        }
+        panic!("not a native fn");
+    }
 }
 
 
@@ -86,7 +110,13 @@ impl PartialOrd for Value {
                     None
                 }
             },
-            Obj(_) => {None},
+            Obj(obj) => {
+                if let Value::Obj(o) = other {
+                    obj.partial_cmp(o)
+                } else {
+                    None
+                }
+            },
             Nil => {
                 if let Value::Nil = other {
                     Some(Ordering::Equal)
@@ -132,6 +162,9 @@ impl Display for Value {
                         } else {
                             write!(f, "<fn {}>", Value::Obj(NonNull::new_unchecked(name)).as_str())
                         }
+                    }
+                    ObjNative(_) => {
+                        write!(f, "<native fn>")
                     }
                     _ => {
                         write!(f, "<obj>")

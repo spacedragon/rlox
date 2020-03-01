@@ -30,7 +30,7 @@ impl LoxClass {
         }
     }
 
-    pub fn arity(&self) -> i8 {
+    pub fn arity(&self) -> u8 {
         if let Some(fun) = self.find_method("init") {
             fun.arity()
         } else {

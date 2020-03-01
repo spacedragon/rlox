@@ -293,12 +293,6 @@ impl Scanner {
         }
     }
 
-    pub fn get_identifier(&self, token: &Token) -> &[char] {
-        let Pos { start, len, ..} = &token.pos;
-        let chars = &self.source[(*start)..(start+len)];
-        chars
-    }
-
     pub fn identifier_eq(&self, a: &Token, b: &Token) -> bool {
         let a_range = a.pos.start..(a.pos.start+a.pos.len) ;
         let b_range = b.pos.start..(b.pos.start+b.pos.len) ;
@@ -306,8 +300,19 @@ impl Scanner {
     }
 
     pub fn get_chars(&self, token: &Token) -> &[char] {
-        let Pos { start, len, ..} = &token.pos;
-        &self.source[(start+1)..(start+len -1)]
+        match token.t {
+            STRING => {
+                let Pos { start, len, ..} = &token.pos;
+                &self.source[(start+1)..(start+len -1)]
+            }
+            IDENTIFIER => {
+                let Pos { start, len, ..} = &token.pos;
+                &self.source[(*start)..(start+len)]
+            }
+            _ => {
+                unreachable!()
+            }
+        }
     }
 
     pub fn get_string(&self, token: &Token) -> String {
@@ -346,7 +351,8 @@ mod test {
         assert_eq!(token.t, STRING);
         assert_eq!(token.pos.start, 0);
         assert_eq!(token.pos.len, 5);
-        assert_eq!(scanner.get_string(&token), "aaa".to_string());
+        let s: String = scanner.get_chars(&token).iter().collect();
+        assert_eq!(s, "aaa");
     }
 
     #[test]

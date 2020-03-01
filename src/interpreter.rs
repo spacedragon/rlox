@@ -98,7 +98,7 @@ impl<O: Output> Interpreter<O> {
 
     fn execute_function(&mut self, callee: Value, args: Vec<Value>) -> ValueResult {
         if let Value::FUN(f) = callee {
-            let actual = args.len() as i8;
+            let actual = args.len() as u8;
             return if actual != f.arity() {
                 Err(ArgumentsSizeNotMatch(f.arity(), actual))
             } else {
@@ -106,7 +106,7 @@ impl<O: Output> Interpreter<O> {
             };
         }
         if let Value::CLASS(class) = callee {
-            let actual = args.len() as i8;
+            let actual = args.len() as u8;
             return if actual != class.borrow().arity() {
                 Err(ArgumentsSizeNotMatch(class.borrow().arity(), actual))
             } else {
@@ -198,7 +198,7 @@ impl <O: Output> StmtVisitor for Interpreter<O> {
     fn visit_func_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Err> {
         if let Stmt::Function(Token { token_type: IDENTIFIER(name), .. },
                               params, _body) = stmt {
-            let f: Fun = Fun::UserFunc(name.clone(), params.len() as i8, stmt.clone(), self.env.clone());
+            let f: Fun = Fun::UserFunc(name.clone(), params.len() as u8, stmt.clone(), self.env.clone());
             self.env.borrow_mut().define(name.clone(), Value::FUN(Box::new(f)));
             return Ok(());
         }
@@ -238,7 +238,7 @@ impl <O: Output> StmtVisitor for Interpreter<O> {
             for m in class_methods {
                 if let Stmt::Function(Token { token_type: IDENTIFIER(name), .. },
                                       params, _body) = m {
-                    let f: Fun = Fun::UserFunc(name.clone(), params.len() as i8, m.clone(), env.clone());
+                    let f: Fun = Fun::UserFunc(name.clone(), params.len() as u8, m.clone(), env.clone());
                     methods.insert(name.clone(), Value::FUN(Box::new(f)));
                 }
             }

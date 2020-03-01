@@ -1,10 +1,14 @@
 use Obj::*;
 use crate::bytecode::chunk::Chunk;
+use crate::bytecode::value::Value;
 
 pub enum Obj {
     ObjString(*const str),
-    ObjFunction(Function)
+    ObjFunction(Function),
+    ObjNative(NativeFn)
 }
+
+pub type NativeFn = fn(args: Vec<Value>) -> Value;
 
 pub struct Function {
     pub arity: usize,

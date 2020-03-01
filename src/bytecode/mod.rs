@@ -6,6 +6,7 @@ pub(crate) mod scanner;
 pub mod chunk;
 pub mod vm;
 pub mod compiler;
+
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 
 #[repr(u8)]
@@ -23,7 +24,7 @@ pub enum OpCode {
     OpTrue,
     OpFalse,
     OpNot,
-    OpEqual ,
+    OpEqual,
     OpGreater,
     OpLess,
     OpPrint,
@@ -36,7 +37,8 @@ pub enum OpCode {
     OpSetLocal,
     OpJump,
     OpJumpIfFalse,
-    OpLoop
+    OpLoop,
+    OpCall,
 }
 
 
@@ -48,8 +50,6 @@ mod test {
     use crate::bytecode::vm::VM;
     use super::debug::output::{stderr_string, stdout_string};
     use crate::bytecode::debug::disassemble_chunk;
-    use crate::bytecode::scanner::Scanner;
-    use crate::bytecode::compiler::Compiler;
     use crate::error::LoxError;
 
     #[test]
@@ -81,30 +81,27 @@ mod test {
     }
 
     #[test]
-    fn test_compile() -> Result<(), LoxError> {
+    fn test_compile() {
         let source = r#"print (-1 + 2) * 3 - -4;"#;
         eval(source);
         assert_eq!(stdout_string(), "7\n");
-        Ok(())
     }
 
     #[test]
-    fn test_expression() -> Result<(), LoxError> {
-
+    fn test_expression() {
         eval(r#"print !(5 - 4 > 3 * 2 == !nil);"#);
         assert_eq!("true\n", stdout_string());
-        Ok(())
     }
 
     #[test]
     fn test_str() -> Result<(), LoxError> {
-
         eval(r#"print "a" + "b"; "#);
         assert_eq!(stdout_string(), "ab\n");
         Ok(())
     }
+
     #[test]
-    fn test_global_var() -> Result<(), LoxError> {
+    fn test_global_var() {
         eval(r#"
         var beverage = "cafe au lait";
         var breakfast = "beignets";
@@ -112,11 +109,10 @@ mod test {
         print breakfast;
         "#);
         assert_eq!(stdout_string(), "beignets with cafe au lait\n");
-        Ok(())
     }
 
     #[test]
-    fn test_local_var() -> Result<(), LoxError> {
+    fn test_local_var() {
         eval(r#"
         {
             var beverage = "cafe au lait";
@@ -124,11 +120,10 @@ mod test {
         }
         "#);
         assert_eq!(stdout_string(), "cafe au lait\n");
-        Ok(())
     }
 
     #[test]
-    fn test_loop() -> Result<(), LoxError> {
+    fn test_loop() {
         eval(r#"
         var sum = 0;
         for (var ii=0;
@@ -139,6 +134,34 @@ mod test {
         print sum;
         "#);
         assert_eq!(stdout_string(), "45\n");
-        Ok(())
+    }
+
+    #[test]
+    fn test_function() {
+        eval(r#"
+        fun hello(name) {
+          print "Hello "+ name;
+        }
+
+        hello("world!");
+        "#);
+        assert_eq!(stdout_string(), "Hello world!\n");
+    }
+
+    #[test]
+    fn test_native() {
+        eval(r#"
+        fun fib(n) {
+          if (n < 2) return n;
+           return fib(n - 2) + fib(n - 1);
+        }
+
+        var start = clock();
+        print fib(35);
+        print clock() - start;
+        "#);
+        let string = stdout_string();
+        println!("{}", string);
+        println!("{}", stderr_string())
     }
 }

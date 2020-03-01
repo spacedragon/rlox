@@ -34,7 +34,6 @@ pub mod output {
     }
 }
 
-#[cfg(all(not(test), debug_assertions))]
 pub mod output {
     use std::io::{Write};
 
@@ -50,6 +49,8 @@ pub mod output {
         out.write_all(s.as_bytes()).expect("");
     }
 }
+
+
 
 use output::{stdout, stderr};
 
@@ -112,6 +113,7 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> usize {
             OpJump => jump_instruction("OP_JUMP", 1, chunk, offset),
             OpJumpIfFalse => jump_instruction("OP_JUMP_IF_FALSE", 1, chunk, offset),
             OpLoop => jump_instruction("OP_LOOP", -1, chunk, offset),
+            OpCall => byte_instruction("OP_CALL", chunk,offset) ,
         }
     } else {
         stderr(format!("Unknown opcode {}\n", instruction));

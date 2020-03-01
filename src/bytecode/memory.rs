@@ -7,7 +7,7 @@ use std::ptr::NonNull;
 use std::cell::RefCell;
 use super::object::Object;
 use crate::bytecode::chunk::Chunk;
-use crate::bytecode::object::Function;
+use crate::bytecode::object::{Function, NativeFn};
 
 
 pub struct Allocator {
@@ -36,6 +36,10 @@ impl Allocator {
 
     pub fn allocate_string(&mut self, chars: &[char]) -> NonNull<Object> {
         let str: String = chars.iter().collect();
+        self.copy_string(str)
+    }
+
+    pub fn copy_string(&mut self, str: String) -> NonNull<Object> {
         let string = str.into_boxed_str();
         if let Some(object) = self.strings.get(&string) {
             NonNull::from(object.clone())
@@ -58,7 +62,6 @@ impl Allocator {
     }
 
 
-
     pub fn free_object(&mut self, ptr: *mut Object) {
         let object = unsafe { Box::from_raw(ptr)} ;
         match object.obj {
@@ -70,6 +73,7 @@ impl Allocator {
             ObjFunction(Function { arity: _, chunk: _ , name: _ }) => {
                 //self.free_object(name);
             }
+            ObjNative(_) => {}
         }
     }
 
@@ -80,6 +84,10 @@ impl Allocator {
             chunk: Chunk::new(),
         };
         self.allocate(ObjFunction(function))
+    }
+
+    pub fn new_native(&mut self, function: NativeFn) -> NonNull<Object>{
+        self.allocate(Obj::ObjNative(function))
     }
 }
 

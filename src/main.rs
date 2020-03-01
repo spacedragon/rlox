@@ -61,8 +61,6 @@ fn fib(n:i64) -> i64 {
 
 
 use crate::bytecode::vm::VM;
-use crate::bytecode::compiler::Compiler;
-use crate::bytecode::scanner::Scanner as CScanner;
 
 fn main() -> Result<(), LoxError>{
     env_logger::init();
@@ -96,7 +94,7 @@ fn main() -> Result<(), LoxError>{
         }
         Command:: Test {} => {
             if let Value::NUMBER(before) = clock(vec![]) {
-                println!("{}", fib(40));
+                println!("{}", fib(35));
                 if let Value::NUMBER(after) = clock(vec![]) {
                     println!("{}", after - before);
                 }

@@ -132,7 +132,7 @@ quick_error! {
         NotCallable {
             display("Target is not callable.")
         }
-        ArgumentsSizeNotMatch(expect: i8, actual: i8) {
+        ArgumentsSizeNotMatch(expect: u8, actual: u8) {
             display("Expected {} arguments but got {}.", expect, actual)
         }
         NoProperties(line: usize) {

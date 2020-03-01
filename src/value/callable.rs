@@ -13,8 +13,8 @@ pub trait Call {
 
 #[derive(Clone, PartialEq)]
 pub enum Fun {
-    Native(String, i8, NativeFn),
-    UserFunc(String, i8, Stmt, Rc<RefCell<Environment>>)
+    Native(String, u8, NativeFn),
+    UserFunc(String, u8, Stmt, Rc<RefCell<Environment>>)
 }
 
 
@@ -28,7 +28,7 @@ impl Debug for Fun {
 
 impl Fun {
 
-    pub fn arity(&self) -> i8 {
+    pub fn arity(&self) -> u8 {
         match self {
             Fun::Native(_, arity, _) => *arity,
             Fun::UserFunc(_, arity, _, _) => *arity,

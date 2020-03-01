@@ -26,8 +26,9 @@ use crate::bytecode::debug::{print_err, disassemble_instruction, println};
 use crate::error::RuntimeError::*;
 use std::collections::HashMap;
 use crate::bytecode::memory::{ALLOCATOR};
-use crate::bytecode::scanner::Scanner;
 use crate::bytecode::compiler::Compiler;
+use crate::bytecode::object::NativeFn;
+use std::time::SystemTime;
 
 const STACK_MAX: usize = 256;
 const FRAMES_MAX: usize = 64;
@@ -55,6 +56,7 @@ impl VM {
 
     pub fn init(&mut self) {
         self.reset_stack();
+        self.define_native("clock", clock);
     }
 
     fn reset_stack(&mut self) {
@@ -82,27 +84,40 @@ impl VM {
     }
 
     pub fn interpret(&mut self, source: &str) {
-        let scanner = Scanner::new(source);
-        let mut compiler = Compiler::new(scanner);
+        self.init();
+        let compiler = Compiler::new(source);
         match compiler.compile() {
             Ok(function) => {
                 self.push(function.clone());
-                self.frames.push(CallFrame {
-                    ip: 0,
-                    slot_offset: 0,
-                    function
-                });
-                if let Err(e) = self.run() {
-                    let ip = self.current_frame().ip;
-                    let chunk = self.current_chunk();
-                    let line = chunk.line(ip);
-                    print_err(format!("{} [line {} in script]", e, line))
+                if let Err(e) = self.call_value(function, 0) {
+                    self.runtime_err(e);
+                } else {
+                    if let Err(e) = self.run() {
+                        self.runtime_err(e)
+                    }
                 }
             }
             Err(err) => {
                 print_err(format!("{}", err))
             }
         }
+    }
+
+    fn runtime_err(&mut self, e: RuntimeError) {
+        print_err(format!("{}\n", e));
+        for frame in self.frames.iter_mut().rev() {
+            let ip = frame.ip;
+            let function = frame.function.as_function();
+            let chunk = &function.chunk;
+            let line = chunk.line(ip);
+            let name = if function.name.is_null() {
+                "script"
+            } else {
+                function.name()
+            };
+            print_err(format!("{} [line {} in {}]", e, line, name))
+        }
+
     }
 
     fn read_byte(&mut self) -> u8 {
@@ -148,7 +163,16 @@ impl VM {
             if let Ok(op) = OpCode::try_from(instruction) {
                 match op {
                     OpReturn => {
-                        return Ok(());
+                        let result = self.pop();
+                        if let Some(frame) = self.frames.pop() {
+                            if self.frames.is_empty() {
+                                self.pop();
+                                return Ok(())
+                            }
+
+                            self.stack.truncate(frame.slot_offset);
+                            self.push(result);
+                        }
                     }
                     OpConstant => {
                         let constant = self.read_constant();
@@ -261,11 +285,48 @@ impl VM {
                         let offset = self.read_u16();
                         self.current_frame().ip -= offset as usize;
                     }
+                    OpCall => {
+                        let arg_count = self.read_byte();
+                        let callee = self.peek(arg_count as usize).clone();
+                        self.call_value(callee, arg_count)?;
+                    }
                 }
             } else {}
         }
     }
 
+    fn call_value(&mut self, callee: Value, arg_count: u8) -> Result<(), RuntimeError> {
+        match callee {
+            f if f.is_function() => {
+                self.call(f, arg_count)
+            }
+            n if n.is_native() => {
+                let native = n.as_native();
+                let new_len = self.stack.len() - (arg_count as usize) - 1;
+                let args = self.stack.split_off(new_len);
+                let result = native(args);
+                self.push(result);
+                Ok(())
+            }
+            _ => {
+                Err(NotCallable)
+            }
+        }
+    }
+
+    fn call(&mut self, mut function: Value, arg_count: u8) -> Result<(), RuntimeError> {
+        let arity = function.as_function().arity as u8;
+        if arg_count != arity as u8 {
+            return Err(ArgumentsSizeNotMatch(arity, arg_count));
+        }
+        let frame = CallFrame {
+            function,
+            ip: 0,
+            slot_offset: self.stack.len() - (arg_count as usize) - 1,
+        };
+        self.frames.push(frame);
+        Ok(())
+    }
 
     fn read_string(&mut self) -> String {
         let c = self.read_constant();
@@ -277,8 +338,27 @@ impl VM {
         println(format!("{}", v))
     }
 
+    fn define_native(&mut self, name: &str, function: NativeFn) {
+        ALLOCATOR.with(|a| {
+            let mut alloc = a.borrow_mut();
+            let fn_name = Value::Obj(alloc.copy_string(name.to_string()));
+            self.push(fn_name);
+            let native = Value::Obj(alloc.new_native(function));
+            self.push(native.clone());
+            self.globals.insert(name.to_string(), native);
+            self.pop();
+            self.pop();
+        })
+    }
+
 }
 
 
 
+pub fn clock(_: Vec<Value>) -> Value {
+    let now = SystemTime::now();
+    let d = now.duration_since(SystemTime::UNIX_EPOCH)
+        .expect("SystemTime before UNIX EPOCH!");
+    Value::Number(d.as_secs_f64())
+}
 
