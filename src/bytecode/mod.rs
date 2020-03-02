@@ -39,6 +39,7 @@ pub enum OpCode {
     OpJumpIfFalse,
     OpLoop,
     OpCall,
+    OpClosure
 }
 
 
@@ -157,7 +158,7 @@ mod test {
         }
 
         var start = clock();
-        print fib(35);
+        print fib(10);
         print clock() - start;
         "#);
         let string = stdout_string();

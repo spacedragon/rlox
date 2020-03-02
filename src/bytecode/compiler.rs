@@ -254,7 +254,8 @@ impl Compiler {
         self.block();
 
         let fun = self.end_compiler();
-        self.emit_constant(fun);
+        let constant = self.current_chunk().add_constant(fun);
+        self.emit_bytes(OpClosure.into(), constant);
     }
 
     fn var_declaration(&mut self) {

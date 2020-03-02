@@ -74,6 +74,7 @@ impl Allocator {
                 //self.free_object(name);
             }
             ObjNative(_) => {}
+            ObjClosure(_) => {}
         }
     }
 
@@ -86,9 +87,35 @@ impl Allocator {
         self.allocate(ObjFunction(function))
     }
 
+    pub fn new_closure(&mut self, function: NonNull<Object>) -> NonNull<Object> {
+        unsafe {
+            match function.as_ref().obj {
+                ObjFunction(_) => {
+                    self.allocate(ObjClosure(function))
+                },
+                _ => {
+                    panic!("can't convert to closure")
+                }
+            }
+        }
+
+    }
+
     pub fn new_native(&mut self, function: NativeFn) -> NonNull<Object>{
         self.allocate(Obj::ObjNative(function))
     }
+}
+
+pub fn new_closure(function: NonNull<Object>) -> NonNull<Object> {
+    ALLOCATOR.with(|a| {
+        a.borrow_mut().new_closure(function)
+    })
+}
+
+pub fn new_native(function: NativeFn) -> NonNull<Object>{
+    ALLOCATOR.with(|a| {
+        a.borrow_mut().new_native(function)
+    })
 }
 
 impl Drop for Allocator {

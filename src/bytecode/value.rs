@@ -15,8 +15,6 @@ pub enum Value {
     Nil
 }
 
-
-
 impl Value {
     pub(crate) fn is_number(&self) -> bool {
         if let Value::Number(_) = self {
@@ -91,6 +89,19 @@ impl Value {
         }
         panic!("not a native fn");
     }
+
+    pub fn is_closure(&self) -> bool {
+        if let Value::Obj(obj) = self {
+            return unsafe {
+                if let ObjClosure(_) = obj.as_ref().obj {
+                    true
+                } else {
+                    false
+                }
+            }
+        }
+        false
+    }
 }
 
 
@@ -156,11 +167,14 @@ impl Display for Value {
                     ObjString(_) => {
                         write!(f, "{}", obj.as_ref().as_str())
                     }
-                    ObjFunction(Function{ name, ..}) => {
-                        if name.is_null() {
-                            write!(f, "<script")
+                    ObjFunction(ref func) => {
+                        write!(f, "{}", func.name())
+                    }
+                    ObjClosure(fptr) => {
+                        if let ObjFunction(func) = &fptr.as_ref().obj {
+                            return write!(f, "<fn {}>", func.name())
                         } else {
-                            write!(f, "<fn {}>", Value::Obj(NonNull::new_unchecked(name)).as_str())
+                            unreachable!()
                         }
                     }
                     ObjNative(_) => {

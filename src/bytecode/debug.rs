@@ -34,6 +34,7 @@ pub mod output {
     }
 }
 
+#[cfg(not(test))]
 pub mod output {
     use std::io::{Write};
 
@@ -114,6 +115,14 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> usize {
             OpJumpIfFalse => jump_instruction("OP_JUMP_IF_FALSE", 1, chunk, offset),
             OpLoop => jump_instruction("OP_LOOP", -1, chunk, offset),
             OpCall => byte_instruction("OP_CALL", chunk,offset) ,
+            OpClosure => {
+                let mut offset = offset + 1;
+                let constant = chunk[offset];
+                offset +=1;
+                stderr(format!("{:16} {:4} {}\n", "OP_CLOSURE", constant,
+                               chunk.constant(constant as usize)));
+                offset
+            }
         }
     } else {
         stderr(format!("Unknown opcode {}\n", instruction));

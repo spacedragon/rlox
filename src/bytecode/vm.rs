@@ -25,7 +25,7 @@ use super::value::Value;
 use crate::bytecode::debug::{print_err, disassemble_instruction, println};
 use crate::error::RuntimeError::*;
 use std::collections::HashMap;
-use crate::bytecode::memory::{ALLOCATOR};
+use crate::bytecode::memory::{ALLOCATOR, new_closure};
 use crate::bytecode::compiler::Compiler;
 use crate::bytecode::object::NativeFn;
 use std::time::SystemTime;
@@ -88,12 +88,17 @@ impl VM {
         let compiler = Compiler::new(source);
         match compiler.compile() {
             Ok(function) => {
-                self.push(function.clone());
-                if let Err(e) = self.call_value(function, 0) {
-                    self.runtime_err(e);
-                } else {
-                    if let Err(e) = self.run() {
-                        self.runtime_err(e)
+                if let Value::Obj(object) = function {
+                    self.push(function.clone());
+                    let closure = new_closure(object);
+                    self.pop();
+                    self.push(Value::Obj(closure));
+                    if let Err(e) = self.call_value(Value::Obj(closure), 0) {
+                        self.runtime_err(e);
+                    } else {
+                        if let Err(e) = self.run() {
+                            self.runtime_err(e)
+                        }
                     }
                 }
             }
@@ -290,6 +295,13 @@ impl VM {
                         let callee = self.peek(arg_count as usize).clone();
                         self.call_value(callee, arg_count)?;
                     }
+                    OpClosure => {
+                        let constant = self.read_constant();
+                        if let Value::Obj(object) = constant {
+                            let closure = new_closure(object);
+                            self.push(Value::Obj(closure));
+                        }
+                    }
                 }
             } else {}
         }
@@ -307,6 +319,9 @@ impl VM {
                 let result = native(args);
                 self.push(result);
                 Ok(())
+            }
+            c if c.is_closure() => {
+                self.call(c, arg_count)
             }
             _ => {
                 Err(NotCallable)

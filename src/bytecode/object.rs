@@ -1,11 +1,13 @@
 use Obj::*;
 use crate::bytecode::chunk::Chunk;
 use crate::bytecode::value::Value;
+use std::ptr::NonNull;
 
 pub enum Obj {
     ObjString(*const str),
     ObjFunction(Function),
-    ObjNative(NativeFn)
+    ObjNative(NativeFn),
+    ObjClosure(NonNull<Object>)
 }
 
 pub type NativeFn = fn(args: Vec<Value>) -> Value;
@@ -58,7 +60,13 @@ impl Object {
             ObjFunction(ref mut ptr) => {
                 ptr
             }
-            _ => panic!("not a function!"),
+            ObjClosure(ref mut ptr) => unsafe {
+                if let ObjFunction(ref mut f) = ptr.as_mut().obj {
+                    return f;
+                }
+                unreachable!()
+            }
+            _ => panic!("not a function or closure!"),
         }
     }
 }
