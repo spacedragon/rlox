@@ -3,7 +3,7 @@ use Value::*;
 use std::ops::{Neg, Add, Sub, Mul, Div};
 use std::cmp::Ordering;
 
-use crate::bytecode::object::{Object, Function, NativeFn};
+use crate::bytecode::object::{Object, Function, NativeFn, Closure};
 use crate::bytecode::object::Obj::*;
 use std::ptr::NonNull;
 
@@ -57,10 +57,19 @@ impl Value {
         false
     }
 
-    pub(crate) fn as_function(&mut self) -> &mut Function {
+    pub(crate) fn as_function(&self) -> &Function {
         if let Value::Obj(obj) = self {
             return unsafe {
-                obj.as_mut().as_function()
+                obj.as_ref().as_function()
+            }
+        }
+        panic!("not a string")
+    }
+
+    pub(crate) fn as_function_mut(&mut self) -> &mut Function {
+        if let Value::Obj(obj) = self {
+            return unsafe {
+                obj.as_mut().as_function_mut()
             }
         }
         panic!("not a string")
@@ -93,7 +102,7 @@ impl Value {
     pub fn is_closure(&self) -> bool {
         if let Value::Obj(obj) = self {
             return unsafe {
-                if let ObjClosure(_) = obj.as_ref().obj {
+                if let ObjClosure(..) = obj.as_ref().obj {
                     true
                 } else {
                     false
@@ -101,6 +110,17 @@ impl Value {
             }
         }
         false
+    }
+
+    pub fn as_closure(&mut self) -> &mut Closure {
+        if let Value::Obj(obj) = self {
+            unsafe {
+                if let ObjClosure(ref mut c) = obj.as_mut().obj {
+                    return c;
+                }
+            }
+        }
+        panic!("not a closure");
     }
 }
 
@@ -170,8 +190,8 @@ impl Display for Value {
                     ObjFunction(ref func) => {
                         write!(f, "{}", func.name())
                     }
-                    ObjClosure(fptr) => {
-                        if let ObjFunction(func) = &fptr.as_ref().obj {
+                    ObjClosure(ref c) => {
+                        if let ObjFunction(func) = &c.function.as_ref().obj {
                             return write!(f, "<fn {}>", func.name())
                         } else {
                             unreachable!()
@@ -180,6 +200,7 @@ impl Display for Value {
                     ObjNative(_) => {
                         write!(f, "<native fn>")
                     }
+                    ObjUpvalue(_) => write!(f, "upvalue"),
                     _ => {
                         write!(f, "<obj>")
                     }

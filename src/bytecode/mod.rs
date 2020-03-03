@@ -39,7 +39,9 @@ pub enum OpCode {
     OpJumpIfFalse,
     OpLoop,
     OpCall,
-    OpClosure
+    OpClosure,
+    OpGetUpvalue,
+    OpSetUpvalue,
 }
 
 
@@ -164,5 +166,20 @@ mod test {
         let string = stdout_string();
         println!("{}", string);
         println!("{}", stderr_string())
+    }
+
+    #[test]
+    fn test_closure() {
+        eval(r#"
+        fun outer() {
+          var x = "outside";
+          fun inner() {
+            print x;
+          }
+          inner();
+        }
+        outer();
+        "#);
+        assert_eq!(stdout_string(), "outside\n");
     }
 }

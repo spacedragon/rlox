@@ -20,7 +20,7 @@ pub mod output {
             out.borrow_mut().push_str(&s)
         })
     }
-    
+
     pub fn stdout(s: String) {
         STDOUT.with(|out| {
             out.borrow_mut().push_str(&s)
@@ -36,7 +36,7 @@ pub mod output {
 
 #[cfg(not(test))]
 pub mod output {
-    use std::io::{Write};
+    use std::io::Write;
 
     pub fn stdout(s: String) {
         let stdout1 = std::io::stdout();
@@ -50,7 +50,6 @@ pub mod output {
         out.write_all(s.as_bytes()).expect("");
     }
 }
-
 
 
 use output::{stdout, stderr};
@@ -95,7 +94,7 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> usize {
             OpAdd => simple_instruction("OP_ADD", offset),
             OpSubtract => simple_instruction("OP_SUBTRACT", offset),
             OpMultiply => simple_instruction("OP_MULTIPLY", offset),
-            OpDivide =>  simple_instruction("OP_DIVIDE", offset),
+            OpDivide => simple_instruction("OP_DIVIDE", offset),
             OpNil => simple_instruction("OP_NIL", offset),
             OpTrue => simple_instruction("OP_TRUE", offset),
             OpFalse => simple_instruction("OP_FALSE", offset),
@@ -108,21 +107,35 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> usize {
             OpDefineGlobal => constant_instruction("OP_DEFINE_GLOBAL", chunk, offset),
             OpGetGlobal => constant_instruction("OP_GET_GLOBAL", chunk, offset),
             OpSetGlobal => constant_instruction("OP_SET_GLOBAL", chunk, offset),
-            OpPopN => byte_instruction("OP_POPN", chunk,offset) ,
-            OpGetLocal => byte_instruction("OP_GET_LOCAL", chunk,offset),
-            OpSetLocal => byte_instruction("OP_SET_LOCAL", chunk,offset),
+            OpPopN => byte_instruction("OP_POPN", chunk, offset),
+            OpGetLocal => byte_instruction("OP_GET_LOCAL", chunk, offset),
+            OpSetLocal => byte_instruction("OP_SET_LOCAL", chunk, offset),
             OpJump => jump_instruction("OP_JUMP", 1, chunk, offset),
             OpJumpIfFalse => jump_instruction("OP_JUMP_IF_FALSE", 1, chunk, offset),
             OpLoop => jump_instruction("OP_LOOP", -1, chunk, offset),
-            OpCall => byte_instruction("OP_CALL", chunk,offset) ,
+            OpCall => byte_instruction("OP_CALL", chunk, offset),
             OpClosure => {
                 let mut offset = offset + 1;
                 let constant = chunk[offset];
-                offset +=1;
-                stderr(format!("{:16} {:4} {}\n", "OP_CLOSURE", constant,
-                               chunk.constant(constant as usize)));
+                offset += 1;
+                let v = chunk.constant(constant as usize);
+                stderr(format!("{:16}: {:4} <fn {}>\n", "OP_CLOSURE", constant,
+                               v));
+                let count = v.as_function().upvalue_count;
+                for _i in 0..count {
+                    let is_local = chunk[offset] == 1;
+                    offset += 1;
+                    let index = chunk[offset];
+                    offset += 1;
+                    let n = if is_local { "local" } else { "upvalue" };
+                    stderr(format!("{:04}      {:16}:      {} {}\n",
+                                   offset - 2, "|", n, index));
+                }
+
                 offset
             }
+            OpGetUpvalue => byte_instruction("OP_GET_UPVALUE", chunk, offset),
+            OpSetUpvalue => byte_instruction("OP_SET_UPVALUE", chunk, offset)
         }
     } else {
         stderr(format!("Unknown opcode {}\n", instruction));
@@ -136,8 +149,8 @@ fn simple_instruction(name: &str, offset: usize) -> usize {
     offset + 1
 }
 
-fn jump_instruction(name: &str,sign: i32, chunk: &Chunk, offset: usize) -> usize {
-    let jump = u16::from_le_bytes([chunk[offset+1],chunk[offset+2]]);
+fn jump_instruction(name: &str, sign: i32, chunk: &Chunk, offset: usize) -> usize {
+    let jump = u16::from_le_bytes([chunk[offset + 1], chunk[offset + 2]]);
     let j: i32 = offset as i32 + 3 + sign * (jump as i32);
     stderr(format!("{:16} {:4} -> {}:\n", name, offset, j));
     offset + 3
@@ -148,6 +161,7 @@ fn byte_instruction(name: &str, chunk: &Chunk, offset: usize) -> usize {
     stderr(format!("{:16}: {:04} \n", name, slot));
     offset + 2
 }
+
 fn constant_instruction(name: &str, chunk: &Chunk, offset: usize) -> usize {
     let constant = chunk[offset + 1];
     stderr(format!("{:16}: {:04} '{}'\n", name, constant,
@@ -158,7 +172,7 @@ fn constant_instruction(name: &str, chunk: &Chunk, offset: usize) -> usize {
 fn constant_instruction_long(name: &str, chunk: &Chunk, offset: usize) -> usize {
     let constant = u16::from_be_bytes([chunk[offset + 1], chunk[offset + 2]]);
     stderr(format!("{:16}: {:04} '{}'\n", name, constant,
-                    chunk.constant(constant as usize)));
+                   chunk.constant(constant as usize)));
 
     offset + 3
 }

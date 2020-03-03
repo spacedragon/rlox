@@ -25,16 +25,18 @@ use super::value::Value;
 use crate::bytecode::debug::{print_err, disassemble_instruction, println};
 use crate::error::RuntimeError::*;
 use std::collections::HashMap;
-use crate::bytecode::memory::{ALLOCATOR, new_closure};
+use crate::bytecode::memory::{ALLOCATOR, new_closure, new_upvalue};
 use crate::bytecode::compiler::Compiler;
-use crate::bytecode::object::NativeFn;
+use crate::bytecode::object::{NativeFn, Object};
 use std::time::SystemTime;
+use std::ptr::NonNull;
+use crate::bytecode::object::Obj::ObjUpvalue;
 
 const STACK_MAX: usize = 256;
 const FRAMES_MAX: usize = 64;
 
 struct CallFrame {
-    function: Value,
+    closure: Value,
     ip: usize,
     slot_offset: usize
 }
@@ -76,7 +78,7 @@ impl VM {
     }
 
     fn current_chunk(&mut self)-> &Chunk {
-        &self.current_frame().function.as_function().chunk
+        &self.current_frame().closure.as_function().chunk
     }
 
     fn current_frame(&mut self) -> &mut CallFrame {
@@ -112,7 +114,7 @@ impl VM {
         print_err(format!("{}\n", e));
         for frame in self.frames.iter_mut().rev() {
             let ip = frame.ip;
-            let function = frame.function.as_function();
+            let function = frame.closure.as_function();
             let chunk = &function.chunk;
             let line = chunk.line(ip);
             let name = if function.name.is_null() {
@@ -298,13 +300,53 @@ impl VM {
                     OpClosure => {
                         let constant = self.read_constant();
                         if let Value::Obj(object) = constant {
-                            let closure = new_closure(object);
-                            self.push(Value::Obj(closure));
+                            let mut closure = Value::Obj(new_closure(object));
+
+                            let upvalues = &mut closure.as_closure().upvalues;
+                            let offset = self.current_frame().slot_offset;
+                            for i in 0..upvalues.len() {
+                                let is_local = self.read_byte() == 1;
+                                let index = self.read_byte();
+                                if is_local {
+                                    upvalues[i] = self.capture_upvalue(offset +
+                                        (index as usize));
+                                } else {
+                                    let vec = &self.current_frame().closure.as_closure().upvalues;
+                                    upvalues[i] = vec[index as usize];
+                                }
+                            }
+                            self.push(closure);
+                        }
+                    }
+                    OpGetUpvalue => {
+                        let slot = self.read_byte() as usize;
+                        let upvalue = self.current_frame().closure.as_closure().upvalues[slot];
+                        unsafe {
+                            if let ObjUpvalue(v) = upvalue.as_ref().obj {
+                            let v = v.as_ref().clone();
+                            self.push(v);
+                            }
+                        }
+                    }
+                    OpSetUpvalue => {
+                        let slot = self.read_byte() as usize;
+                        let mut upvalue = self.current_frame().closure.as_closure().upvalues[slot];
+                        unsafe {
+                            let value = self.peek(0);
+                            let upvalue = upvalue.as_mut();
+                            if let ObjUpvalue( ref mut upvalue ) = &mut upvalue.obj {
+                                  *upvalue = NonNull::from(value);
+                            }
                         }
                     }
                 }
             } else {}
         }
+    }
+
+    fn capture_upvalue(&self, idx: usize) -> NonNull<Object> {
+        let local = &self.stack[idx];
+        new_upvalue(local)
     }
 
     fn call_value(&mut self, callee: Value, arg_count: u8) -> Result<(), RuntimeError> {
@@ -329,13 +371,13 @@ impl VM {
         }
     }
 
-    fn call(&mut self, mut function: Value, arg_count: u8) -> Result<(), RuntimeError> {
+    fn call(&mut self, function: Value, arg_count: u8) -> Result<(), RuntimeError> {
         let arity = function.as_function().arity as u8;
         if arg_count != arity as u8 {
             return Err(ArgumentsSizeNotMatch(arity, arg_count));
         }
         let frame = CallFrame {
-            function,
+            closure: function,
             ip: 0,
             slot_offset: self.stack.len() - (arg_count as usize) - 1,
         };

@@ -7,7 +7,8 @@ use std::ptr::NonNull;
 use std::cell::RefCell;
 use super::object::Object;
 use crate::bytecode::chunk::Chunk;
-use crate::bytecode::object::{Function, NativeFn};
+use crate::bytecode::object::{Function, NativeFn, Closure};
+use crate::bytecode::value::Value;
 
 
 pub struct Allocator {
@@ -70,11 +71,12 @@ impl Allocator {
                 self.strings.remove(&string);
                 mem::forget(string);
             },
-            ObjFunction(Function { arity: _, chunk: _ , name: _ }) => {
+            ObjFunction(Function { ..}) => {
                 //self.free_object(name);
             }
             ObjNative(_) => {}
-            ObjClosure(_) => {}
+            ObjClosure(..) => {}
+            ObjUpvalue(..) => {}
         }
     }
 
@@ -83,6 +85,7 @@ impl Allocator {
             arity: 0,
             name: ptr::null_mut(),
             chunk: Chunk::new(),
+            upvalue_count: 0
         };
         self.allocate(ObjFunction(function))
     }
@@ -90,8 +93,11 @@ impl Allocator {
     pub fn new_closure(&mut self, function: NonNull<Object>) -> NonNull<Object> {
         unsafe {
             match function.as_ref().obj {
-                ObjFunction(_) => {
-                    self.allocate(ObjClosure(function))
+                ObjFunction(ref f) => {
+                    self.allocate(ObjClosure(Closure {
+                        function,
+                        upvalues: vec![ NonNull::dangling() ; f.upvalue_count as usize]
+                    }))
                 },
                 _ => {
                     panic!("can't convert to closure")
@@ -104,6 +110,10 @@ impl Allocator {
     pub fn new_native(&mut self, function: NativeFn) -> NonNull<Object>{
         self.allocate(Obj::ObjNative(function))
     }
+
+    pub fn new_upvalue(&mut self, slot: NonNull<Value>) -> NonNull<Object>{
+        self.allocate(Obj::ObjUpvalue(slot))
+    }
 }
 
 pub fn new_closure(function: NonNull<Object>) -> NonNull<Object> {
@@ -115,6 +125,12 @@ pub fn new_closure(function: NonNull<Object>) -> NonNull<Object> {
 pub fn new_native(function: NativeFn) -> NonNull<Object>{
     ALLOCATOR.with(|a| {
         a.borrow_mut().new_native(function)
+    })
+}
+
+pub fn new_upvalue(slot: &Value) -> NonNull<Object> {
+    ALLOCATOR.with(|a| {
+        a.borrow_mut().new_upvalue(NonNull::from(slot))
     })
 }
 

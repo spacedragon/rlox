@@ -7,7 +7,8 @@ pub enum Obj {
     ObjString(*const str),
     ObjFunction(Function),
     ObjNative(NativeFn),
-    ObjClosure(NonNull<Object>)
+    ObjClosure(Closure),
+    ObjUpvalue(NonNull<Value>),
 }
 
 pub type NativeFn = fn(args: Vec<Value>) -> Value;
@@ -15,7 +16,13 @@ pub type NativeFn = fn(args: Vec<Value>) -> Value;
 pub struct Function {
     pub arity: usize,
     pub(crate) chunk: Chunk,
-    pub name: *mut Object
+    pub name: *mut Object,
+    pub upvalue_count: u8,
+}
+
+pub struct Closure {
+    pub function: NonNull<Object>,
+    pub upvalues: Vec<NonNull<Object>>
 }
 
 impl Function {
@@ -55,13 +62,28 @@ impl Object {
         }
     }
 
-    pub fn as_function(&mut self) -> &mut Function {
+    pub fn as_function(&self) -> &Function {
+        match self.obj {
+            ObjFunction(ref ptr) => {
+                ptr
+            }
+            ObjClosure(ref c) => unsafe {
+                if let ObjFunction(ref f) = c.function.as_ref().obj {
+                    return f;
+                }
+                unreachable!()
+            }
+            _ => panic!("not a function or closure!"),
+        }
+    }
+
+    pub fn as_function_mut(&mut self) -> &mut Function {
         match self.obj {
             ObjFunction(ref mut ptr) => {
                 ptr
             }
-            ObjClosure(ref mut ptr) => unsafe {
-                if let ObjFunction(ref mut f) = ptr.as_mut().obj {
+            ObjClosure(ref mut c) => unsafe {
+                if let ObjFunction(ref mut f) = c.function.as_mut().obj {
                     return f;
                 }
                 unreachable!()

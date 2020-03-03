@@ -31,6 +31,7 @@ struct FunCompiler {
     function: Value,
     function_type: FunctionType,
     enclosing: Option<Box<FunCompiler>>,
+    upvalues: Vec<Upvalue>,
 }
 
 impl FunCompiler {
@@ -48,6 +49,7 @@ impl FunCompiler {
                 },
             }],
             enclosing: None,
+            upvalues: vec![]
         }
     }
 }
@@ -60,6 +62,7 @@ impl Default for FunCompiler {
             scope_depth: 0,
             locals: vec![],
             enclosing: None,
+            upvalues: vec![]
         }
     }
 }
@@ -68,6 +71,11 @@ impl Default for FunCompiler {
 enum FunctionType {
     Function,
     Script,
+}
+
+pub struct Upvalue {
+    index: u8,
+    is_local: bool,
 }
 
 struct Parser {
@@ -145,7 +153,7 @@ impl Compiler {
     }
 
     fn current_chunk(&mut self) -> &mut Chunk {
-        let f = self.current.function.as_function();
+        let f = self.current.function.as_function_mut();
         &mut f.chunk
     }
 
@@ -158,7 +166,7 @@ impl Compiler {
             _ => {
                 let token = self.parser.previous.clone();
                 if let Value::Obj(object) = self.copy_string(&token) {
-                    let function = self.current.function.as_function();
+                    let function = self.current.function.as_function_mut();
                     function.name = object.as_ptr()
                 }
             }
@@ -180,12 +188,14 @@ impl Compiler {
         if self.parser.had_error {
             Err(CompileError)
         } else {
-            let fun = self.end_compiler();
-            Ok(fun)
+            if let Some(fun) = self.end_compiler() {
+                return Ok(fun.function)
+            };
+            return Ok(Value::Nil);
         }
     }
 
-    fn end_compiler(&mut self) -> Value {
+    fn end_compiler(&mut self) -> Option<FunCompiler> {
         self.emit_return();
         if !self.parser.had_error {
             #[cfg(debug_assertions)]
@@ -196,13 +206,15 @@ impl Compiler {
                     disassemble_chunk(chunk, &name)
                 }
         }
-        let result = self.current.function.clone();
         if self.current.enclosing.is_some() {
-            let tmp = mem::take(&mut self.current);
-            self.current = *tmp.enclosing.unwrap();
-            return tmp.function;
+            let enclosing = mem::replace(&mut self.current.enclosing, None).unwrap();
+
+            let previous = mem::replace(&mut self.current, *enclosing);
+
+            return Some(previous);
         }
-        return result;
+        let compiler = mem::take(&mut self.current);
+        return Some(compiler);
     }
 
     fn declaration(&mut self) {
@@ -234,7 +246,7 @@ impl Compiler {
 
         if !self.check(RIGHT_PAREN) {
             loop {
-                let f = self.current.function.as_function();
+                let f = self.current.function.as_function_mut();
                 f.arity += 1;
                 if f.arity > std::u8::MAX as usize {
                     self.parser.error_at_current("Cannot have more than 255 parameters.");
@@ -252,10 +264,15 @@ impl Compiler {
 
         self.consume(LEFT_BRACE, "Expect '{' before function body.");
         self.block();
+        if let Some(compiler) = self.end_compiler() {
+            let constant = self.current_chunk().add_constant(compiler.function);
+            self.emit_bytes(OpClosure.into(), constant);
 
-        let fun = self.end_compiler();
-        let constant = self.current_chunk().add_constant(fun);
-        self.emit_bytes(OpClosure.into(), constant);
+            for up in compiler.upvalues {
+                self.emit_bytes(up.is_local as u8, up.index);
+            }
+        };
+
     }
 
     fn var_declaration(&mut self) {
@@ -746,9 +763,15 @@ impl Compiler {
         let get: OpCode;
         let set: OpCode;
         let arg: u8;
-        if let Some(i) = self.resolve_local(name) {
+        let compiler = &mut self.current;
+        let parser = &mut self.parser;
+        if let Some(i) = Compiler::resolve_local(parser, compiler, name) {
             get = OpGetLocal;
             set = OpSetLocal;
+            arg = i;
+        } else if let Some(i) = Compiler::resolve_upvalue(parser, compiler, name) {
+            get = OpGetUpvalue;
+            set = OpSetUpvalue;
             arg = i;
         } else {
             arg = self.identifier_constant(name);
@@ -764,17 +787,44 @@ impl Compiler {
         }
     }
 
-    fn resolve_local(&mut self, name: &Token) -> Option<u8> {
-        for i in (0..self.current.locals.len()).rev() {
-            let local = &self.current.locals[i];
-            if self.parser.scanner.identifier_eq(&local.name, name) {
+    fn resolve_local(parser:&mut Parser, compiler: &mut FunCompiler, name: &Token) -> Option<u8> {
+        for i in (0..compiler.locals.len()).rev() {
+            let local = &compiler.locals[i];
+            if parser.scanner.identifier_eq(&local.name, name) {
                 if local.depth == -1 {
-                    self.parser.error_at_current("Cannot read local variable in its own initializer.")
+                    parser.error_at_current("Cannot read local variable in its own initializer.")
                 }
                 return Some(i as u8);
             }
         }
         None
+    }
+
+    fn resolve_upvalue(parser:&mut Parser, compiler: &mut FunCompiler, name: &Token) -> Option<u8> {
+        if let Some(encolsing) = &mut compiler.enclosing {
+            if let Some(local) = Compiler::resolve_local(parser,encolsing, name) {
+                return Compiler::add_upvalue(parser, compiler, local, true);
+            }
+
+            if let Some(upvalue) = Compiler::resolve_upvalue(parser,encolsing, name) {
+                return Compiler::add_upvalue(parser,compiler, upvalue, false);
+            }
+        }
+        None
+    }
+
+    fn add_upvalue(parser: &mut Parser, compiler: &mut FunCompiler, index: u8, is_local: bool) -> Option<u8> {
+        compiler.upvalues.push(Upvalue {
+            index,
+            is_local,
+        });
+        let count = compiler.upvalues.len() as u8;
+        if count == std::u8::MAX {
+            parser.error("Too many closure variables in function.");
+            return None;
+        }
+        compiler.function.as_function_mut().upvalue_count = count;
+        Some(count -1)
     }
 
     fn and_(&mut self, _can_assign: bool) {

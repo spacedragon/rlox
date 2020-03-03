@@ -61,6 +61,10 @@ impl Chunk {
         &self.constants[offset]
     }
 
+    pub fn constant_mut(&mut self, offset: usize) -> &mut Value {
+        &mut self.constants[offset]
+    }
+
     pub fn line(&self, offset: usize) -> i32 {
         self.lines[offset]
     }
